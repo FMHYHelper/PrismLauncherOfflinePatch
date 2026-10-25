@@ -188,26 +188,36 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = $env:PRISM_TAG
+          # Release shape (kit 9): one relevant file per platform, plus the
+          # macOS pair (DMG + bare binary) - the drop-in story everywhere.
+          # Side-effect outputs of the tag's packaging action (Windows
+          # portable zip, Linux portable tarball, macOS binary zip) are
+          # deliberately not claimed; the docs explain the trade-offs.
           New-Item -ItemType Directory -Force -Path out | Out-Null
           if ($env:RUNNER_OS -eq 'Windows') {
             $exe = Get-ChildItem build -Recurse -File | Where-Object { $_.Name -ieq 'prismlauncher.exe' } | Select-Object -First 1
             if ($null -eq $exe) { throw "prismlauncher.exe not found in build output" }
             Copy-Item $exe.FullName "out/PrismLauncher.exe"
-            if (-not (Test-Path install-portable)) { throw "install-portable folder not produced by packaging" }
-            Compress-Archive -Path (Join-Path (Get-Location) 'install-portable/*') -DestinationPath (Join-Path (Get-Location) "out/PrismLauncher-Windows-MSVC-Portable-$tag.zip")
           }
           elseif ($env:RUNNER_OS -eq 'Linux') {
             $appimage = Get-ChildItem -File | Where-Object { $_.Name -like "PrismLauncher-Linux-*x86_64.AppImage" } | Select-Object -First 1
             if ($null -eq $appimage) { throw "AppImage not found in workspace" }
             Move-Item $appimage.FullName "out/PrismLauncher-Linux-x86_64-$tag.AppImage"
-            $tarball = Get-ChildItem -File | Where-Object { $_.Name -eq 'PrismLauncher-portable.tar.gz' } | Select-Object -First 1
-            if ($null -eq $tarball) { throw "portable tarball not found in workspace" }
-            Move-Item $tarball.FullName "out/PrismLauncher-Linux-Qt6-Portable-$tag.tar.gz"
           }
           else {
             $dmg = Get-ChildItem -File -Filter "PrismLauncher.dmg" | Select-Object -First 1
             if ($null -eq $dmg) { throw "DMG not found in workspace" }
             Move-Item $dmg.FullName "out/PrismLauncher-macOS-$tag.dmg"
+            # The bare drop-in binary: the patched universal executable from
+            # inside the freshly packaged bundle. Upstream's macOS packaging
+            # signs the inner binary and then renames the bundle to
+            # "Prism Launcher.app"; the regexp tolerates either bundle name.
+            $appBinary = Get-ChildItem install -Recurse -File |
+              Where-Object { $_.FullName -match 'Prism ?Launcher\.app[/\\]Contents[/\\]MacOS[/\\]prismlauncher$' } |
+              Select-Object -First 1
+            if ($null -eq $appBinary) { throw "patched prismlauncher binary not found under install/" }
+            Copy-Item $appBinary.FullName "out/prismlauncher-macos"
+            & chmod +x "out/prismlauncher-macos"
           }
           Write-Host "Staged:"
           Get-ChildItem out -File | ForEach-Object { Write-Host "  $($_.Name)" }

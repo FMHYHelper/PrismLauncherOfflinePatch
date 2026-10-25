@@ -145,7 +145,7 @@ foreach ($tag in @($byTag.Keys)) {
             '--title', ("Prism Launcher " + $tag + " (offline-patched)"),
             '--notes-file', $notesPath
         ) + $extra
-        gh @createArgs
+        gh release create @createArgs
         if ($LASTEXITCODE -ne 0) { throw ("gh release create failed for " + $tag) }
     }
 

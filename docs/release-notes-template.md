@@ -63,34 +63,50 @@ platform uses (read from the tag's own CI files). None of the builds carry
 a vendor code signature - this kit holds no signing credentials on any
 platform - so the integrity check to use is `checksums.txt` below.
 
-- **Windows exe** (`PrismLauncher.exe`): drop-in replacement for the
+- **Windows** (`PrismLauncher.exe`): drop-in replacement for the
   `prismlauncher.exe` inside an existing official install; see the steps
   under *Install* below. Windows SmartScreen may warn about an unsigned
   exe - "More info" and "Run anyway" after checking the checksum.
-- **Windows standalone folder**
-  (`PrismLauncher-Windows-MSVC-Portable-{{TAG}}.zip`): a complete launcher
-  folder (launcher plus its Qt runtime), packaged by the same packaging the
-  official release uses. Use this for a fresh start, or after a version
-  jump when an older folder carries too-old Qt runtime files.
-- **Linux** (`PrismLauncher-Linux-x86_64-{{TAG}}.AppImage`): one file -
-  make it executable and run. Works on ordinary distributions and on a
-  Steam Deck in desktop mode.
-- **Linux portable folder** (`PrismLauncher-Linux-Qt6-Portable-{{TAG}}.tar.gz`):
-  extract into a folder and run the launcher inside its `bin/` folder.
-- **macOS universal** (`PrismLauncher-macOS-{{TAG}}.dmg`): drag to
-  Applications. Ad-hoc signed on macOS 12 and newer; Gatekeeper asks on the
-  first launch - right-click the app and choose *Open*, after checking the
-  checksum.
+- **Linux / Steam Deck**
+  (`PrismLauncher-Linux-x86_64-{{TAG}}.AppImage`): one self-contained
+  file - it replaces the official AppImage and carries its own Qt
+  runtime, so unlike Windows it has no version-jump dance at all.
+  Make it executable (`chmod +x`) if the browser stripped that, then
+  run it. On a Steam Deck, desktop mode.
+- **macOS - full app** (`PrismLauncher-macOS-{{TAG}}.dmg`): the easy
+  route - open it and drag to Applications, replacing the official
+  copy. Ad-hoc signed on macOS 12 and newer; Gatekeeper asks on the
+  first launch - right-click the app and choose *Open*, or use *Open
+  Anyway* under System Settings > Privacy & Security on Apple Silicon.
+- **macOS - drop-in binary** (`prismlauncher-macos`): the bare patched
+  universal binary, for an existing official installation. Replace the
+  official `prismlauncher` inside the app's `Contents/MacOS` (keep a
+  backup of the original); Apple refuses the first launch of the
+  swapped bundle - signature behavior, not corruption - so re-sign the
+  bundle once:
+
+    codesign --force --deep -s - "/Applications/Prism Launcher.app"
 
 Install
 -------
 
-1. Take the official **Windows-MSVC** release of the same version
-   (portable zip or installer - either) if you don't have it already.
-2. Replace its `prismlauncher.exe` with the `PrismLauncher.exe` attached here
-   (keep a backup of the original).
-3. The launcher afterwards is yours to configure; the built-in updater may
-   offer official builds later - accept it and re-apply this patched exe.
+Official first, patched file second - the same order on every platform:
+
+1. Have the official release of the same version installed the ordinary
+   way (Windows installer or official portable zip; the upstream
+   AppImage; the official DMG), and quit the launcher if it is running.
+2. Put this release's file on top:
+   - Windows: replace the official `prismlauncher.exe` with the
+     attached `PrismLauncher.exe`, keeping a backup of the original.
+   - Linux: replace the official AppImage file with the attached one
+     (and `chmod +x` it if the browser stripped the bit).
+   - macOS: drag the DMG over Applications, or swap the attached
+     `prismlauncher-macos` into `Contents/MacOS` of the official app
+     and run the re-sign line above.
+3. The launcher afterwards is yours to configure; the built-in updater
+   may offer official builds later - take the official update first (it
+   rights the runtime files on big version jumps), then re-apply this
+   release's patched file.
 
 Provenance
 ----------

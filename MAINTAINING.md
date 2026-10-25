@@ -81,25 +81,35 @@ verify their own builds. Both are opaque by design: one is a hash with no public
 preimage, the other a public verification key. They are not decoded here and
 should not be.
 
-## Multi-platform builds (kit 6)
+## Multi-platform builds (kit 6, release shape reshaped in kit 9)
 
 Since kit 6 a run builds every platform the official release leads with, in
 parallel, and pools them into one release per tag:
 
-- **Windows-MSVC** (`windows-2022`): the bare `PrismLauncher.exe` plus
-  `PrismLauncher-Windows-MSVC-Portable-<tag>.zip` from the tag's own
-  packaging action. The NSIS installer is built as a side effect of that
-  action but intentionally not attached: an unsigned installer adds
-  SmartScreen friction for nothing, the portable zip covers the same need.
-- **Linux x86_64** (`ubuntu-24.04`): AppImage + portable tarball from the
-  tag's own packaging action. GPG signing inputs stay unset, so the
+- **Windows-MSVC** (`windows-2022`): the bare `PrismLauncher.exe`, a
+  drop-in for the official `prismlauncher.exe`, and nothing else. The
+  tag's own packaging action still builds the NSIS installer and the
+  portable zip as side effects; neither is attached since kit 9. The
+  zip's old job (fresh starts, offline version-jump fallback) is covered
+  by the documented official-first update order: the official update
+  owns and rights the Qt runtime files, and the exe paste follows it.
+- **Linux x86_64** (`ubuntu-24.04`): the AppImage, nothing else - one
+  self-contained file that replaces the official AppImage; the platform
+  has no version-jump dance because the file carries its own Qt
+  runtime. The portable tarball is still built as a side effect and is
+  not attached since kit 9. GPG signing inputs stay unset, so the
   AppImage is unsigned (the action warns and continues). Its zsync update
   field points at the copy's own releases; it is harmless and unused here,
   since the in-app updater is official-build territory.
-- **macOS universal** (`macos-26`, deployment 12.0, Qt 6.9.3): DMG, ad-hoc
-  signed (`AdhocSignedApp.entitlements`), notarization skipped without
-  credentials. This is the only channel macOS has on the kit - the Sparkle
-  self-updater path stays unused, so macOS updates are manual replacements.
+- **macOS universal** (`macos-26`, deployment 12.0, Qt 6.9.3): the DMG,
+  the easy whole-app route, plus the bare universal binary
+  `prismlauncher-macos` staged out of the freshly packaged bundle for
+  the drop-in swap route - documented with its one-line arm64 re-sign in
+  the README's macOS tutorial. Upstream's action also writes a binary
+  zip as a side effect, not attached. The bundle and binary are ad-hoc
+  signed (`AdhocSignedApp.entitlements`) and notarization is skipped
+  without credentials, and the Sparkle self-updater path stays unused -
+  macOS updates are manual replacements on either route.
 
 ### How the recipes are read
 

@@ -13,12 +13,11 @@ modified.
 **This repository hosts no binaries.** It is the tool, not the distribution:
 no launcher code is stored here. Every build starts from a fresh clone of an
 upstream release tag, your patch files from `patches/` are applied on top of
-it, and the patched builds - the Windows exe (drop-in for the official one), a
-Windows portable zip, the Linux AppImage and portable tarball, and the macOS
-DMG, each packaged the way the official releases are - plus the exact source
-patch land in *your own copy's* Releases tab when you run it there. That makes
-the whole thing easy to read and easy to extend: a patch is one plain-text
-file.
+it, and the patched builds - the Windows exe (drop-in for the official one),
+the Linux AppImage, and the macOS pair (DMG plus bare binary) - plus the
+exact source patch land in *your own copy's* Releases tab when you run it
+there. That makes the whole thing easy to read and easy to extend: a patch
+is one plain-text file.
 
 ---
 
@@ -68,11 +67,12 @@ compiling the launcher from real source code.
 
 **Step 5.** Open the **Releases** page **of your own new repository**. Download
 **`PrismLauncher.exe`** (the only `.exe` there), open your existing Prism
-Launcher folder (for example `%AppData%\PrismLauncher` or wherever the portable
-copy lives), and paste it in, replacing the old one. **Keep a copy of the
-original exe first.** Not on Windows? Jump to *What gets built, and where*
-below - the Linux and macOS bundles are installed differently, and all of it
-is described there.
+Launcher folder (for example `%AppData%\PrismLauncher` or wherever your
+portable copy lives), keep a copy of the original exe, and paste the
+download in, replacing the old `prismlauncher.exe` - keeping that exact
+name, which the folder's shortcuts and the updater's backup logic point
+to. Taking it on macOS, Linux or a Steam Deck? Skip down to *Installing
+on each platform*.
 
 After that you do nothing. When the launcher team publishes a new version, a
 fresh patched build shows up in your Releases within a day - for every
@@ -86,24 +86,23 @@ with):
 
 | File | For | How to use it |
 |---|---|---|
-| `PrismLauncher.exe` | Windows | paste it over the official `prismlauncher.exe` (the two steps of *The easy way*) |
-| `PrismLauncher-Windows-MSVC-Portable-<tag>.zip` | Windows | a full launcher folder (exe + Qt runtime), unpack into a fresh folder and run |
-| `PrismLauncher-Linux-x86_64-<tag>.AppImage` | Linux, Steam Deck | make it executable (`chmod +x`) and run it |
-| `PrismLauncher-Linux-Qt6-Portable-<tag>.tar.gz` | Linux, Steam Deck | extract into a folder, run the launcher inside `bin/` |
-| `PrismLauncher-macOS-<tag>.dmg` | macOS | open it, drag the app to Applications |
+| `PrismLauncher.exe` | Windows | drop-in for the official `prismlauncher.exe` (tutorial below: Windows) |
+| `PrismLauncher-Linux-x86_64-<tag>.AppImage` | Linux, Steam Deck | one self-contained file, replaces the official AppImage (tutorial below: Linux) |
+| `PrismLauncher-macOS-<tag>.dmg` | macOS | a complete app, drag to Applications (tutorial below: macOS route 1) |
+| `prismlauncher-macos` | macOS | the bare patched binary, swapped into an official app (tutorial below: macOS route 2) |
 | `source-patches-<tag>.patch` + `checksums.txt` | all | the exact source diff applied, and the expected checksums of every file |
 
 Notes worth having in writing:
 
 - **Nothing is signed.** This kit holds no vendor signing credentials, so the
   Windows builds are unsigned (SmartScreen may warn: *More info* then *Run
-  anyway*, after checking the checksum), the macOS build is ad-hoc signed
-  (Gatekeeper asks on first launch: right-click the app and choose *Open*),
-  and the Linux builds are unsigned. `checksums.txt` is the integrity check
+  anyway*, after checking the checksum), the macOS builds are ad-hoc signed
+  (Gatekeeper asks on first launch, and the binary-swap route needs one
+  re-sign line on Apple Silicon - both covered in the macOS tutorial), and
+  the Linux builds are unsigned. `checksums.txt` is the integrity check
   to use instead.
-- **Steam Deck**: switch to desktop mode, download the AppImage, make it
-  executable, run it - and optionally use *Add to Steam* from its program
-  menu. This is not the Flathub build: upstream's official Flathub channel
+- **Steam Deck**: desktop mode only - the Linux tutorial below carries the
+  steps. This is not the Flathub build: upstream's official Flathub channel
   continues to exist on its own and is untouched by this template.
 - **The in-app updater only knows official builds** (that is exactly what
   the version-jump section below relies on). Updating a *patched* install
@@ -113,6 +112,97 @@ Notes worth having in writing:
   repositories). Set the repository **variable** `platforms` (same place as
   `no_binaries`) to any of `windows`, `linux`, `macos` - comma or space
   separated, or leave it unset for all three.
+
+### Installing on each platform
+
+All routes below are plain file moves - no installer of this template's
+exists at any point. The order is the same everywhere: have the official
+release of the same version present first, then put the patched file on
+top of it. And check every download against `checksums.txt` once.
+
+**Windows - the exe paste:**
+
+1. Have the official **Windows-MSVC** build of the same version installed
+   (official installer or official portable zip - either), and quit the
+   launcher if it is running.
+2. Download `PrismLauncher.exe` from your copy's Releases.
+3. Open your existing Prism Launcher folder (for example
+   `%AppData%\PrismLauncher`, or the folder of your portable copy). Keep
+   a copy of the original `prismlauncher.exe` (rename it to
+   `prismlauncher.exe.orig`), then place the downloaded file there named
+   exactly `prismlauncher.exe` - that name is what the folder's shortcuts
+   and the updater's backup logic point to.
+4. Run it. SmartScreen may warn once about the unsigned exe: choose
+   *More info*, then *Run anyway*.
+
+That is the whole procedure, and within one version line every new release
+repeats it identically.
+
+**Linux and Steam Deck - the AppImage swap:**
+
+1. Have the official AppImage of the same version set up where you like
+   it (upstream's release page, `chmod +x`, first run), and quit the
+   launcher if it is running. Instances and settings live under
+   `~/.local/share/PrismLauncher` and nothing in this swap touches them.
+2. Download `PrismLauncher-Linux-x86_64-<tag>.AppImage` from your copy's
+   Releases.
+3. Replace the official AppImage file with the patched one - same name
+   if you want it invisible, a fresh name if you would rather keep both
+   side by side. If the browser stripped the executable bit, set it
+   again: `chmod +x <the file you placed>`.
+4. Run it. This swap is the entire update procedure on Linux: the
+   AppImage carries its own Qt runtime, so a version jump is the same
+   one-file swap with no extra steps - there is no Qt dance on Linux at
+   all.
+
+Steam Deck: switch to **desktop mode**, do exactly the above (a folder
+like `~/Applications` works well), and press *Add to Steam* from the
+file manager if you want it in your library. Never in gaming mode.
+
+**macOS - two routes:**
+
+Route 1 - the DMG, no terminal at all, updates like the official app:
+
+1. Quit any running launcher. Download `PrismLauncher-macOS-<tag>.dmg`
+   from your copy's Releases.
+2. Open the DMG and drag `Prism Launcher` onto Applications, replacing
+   the official copy (rename the old app to `Prism Launcher.orig` first
+   if you want a rollback copy). This app *is* your install now: new
+   versions arrive as a new DMG, drag over again.
+3. First launch: Gatekeeper asks about the unsigned developer.
+   Right-click the app and choose *Open*. On Apple Silicon, if macOS
+   gives a harder refusal instead, open *System Settings > Privacy &
+   Security* - the blocked app is listed there with an *Open Anyway*
+   button.
+
+Route 2 - the bare binary swap, into an official install (Apple Silicon:
+this route needs exactly one terminal line, shown in step 3):
+
+1. Quit any running launcher, and make sure the official app in
+   /Applications is already the same version as the file (official
+   first - the same order as Windows). Download `prismlauncher-macos`
+   from your copy's Releases.
+2. In Finder: `Applications > Prism Launcher`, right-click > *Show
+   Package Contents* > `Contents` > `MacOS`. Keep a copy of the official
+   `prismlauncher` binary (rename it `prismlauncher.orig`), then place
+   the downloaded file there named exactly `prismlauncher`. Finder may
+   ask for your password before replacing - that is the system guarding
+   /Applications, say yes.
+3. Launch once from Applications. On Apple Silicon, macOS will refuse
+   ("damaged" or "cannot verify"): the bundle's signature no longer
+   matches what is inside it - expected, not corruption. Re-sign the
+   bundle once in Terminal:
+
+   ```
+   codesign --force --deep -s - "/Applications/Prism Launcher.app"
+   ```
+
+4. Launch again - the official install now runs the patched launcher,
+   universal (Apple Silicon and Intel alike).
+
+Both macOS routes keep everything else stock: accounts, instances and
+settings stay exactly where the official launcher keeps them, and the
+DMG is the same patched app packaged the official way.
 
 ---
 
@@ -147,19 +237,19 @@ fully working, and the paste waits for step 2. The updater's dialog also
 carries a **Skip** button if you would rather turn the offer down until the
 patched build exists.
 
-One thing the built-in updater cannot do is refresh a folder whose Qt
-runtime is too old *without* going through the official build. If you are
-offline when a version jump happens: download the
-`PrismLauncher-Windows-MSVC-Portable-<tag>.zip` of the new version from your
-copy's Releases - it is a complete patched folder (launcher plus fresh Qt
-runtime) - unpack it into a fresh folder, move your instances and
-`accounts.json` in, done. Later releases within the line go back to the
-ordinary paste-in routine.
+One thing the built-in updater cannot do is refresh a folder's Qt runtime
+*without* going through the official build - and that is by design: the
+template ships the exe only, and the official release is what owns and
+rights the runtime files. The official update in step 1 is therefore the
+procedure, not advice you may skip: run it first (the built-in updater,
+or the official installer from https://prismlauncher.org when updating
+by hand), and the patched exe of step 2 pastes on top of a folder that
+is already the right shape.
 
 > If a freshly pasted exe refuses to start (it closes instantly, or an error
 > names a `Qt6*.dll`): the folder's Qt runtime is older than the exe. That
 > is the version-jump situation above, not a broken patch - the official
-> update (or the portable zip route) is what refreshes those files.
+> update is what refreshes those files, then the paste follows.
 
 ## If a run turns red
 
@@ -300,10 +390,13 @@ login feature.
    (numbered) order, and reads the tag's own CI configuration to build each
    platform the way the official build of that tag does: same runner, Qt
    version, compiler setup and CMake preset, per platform.
-4. Assets per release: one binary bundle per platform (the Windows exe plus
-   the Windows portable zip, the Linux AppImage plus portable tarball, the
-   macOS DMG), `source-patches-<tag>.patch` (the exact source diff applied),
-   and one `checksums.txt` covering every file. Nothing else is shipped.
+4. Assets per release: one file per platform - the Windows exe, the Linux
+   AppImage, and the macOS pair (DMG plus bare `prismlauncher-macos`
+   binary) - plus `source-patches-<tag>.patch` (the exact source diff
+   applied) and one `checksums.txt` covering every file. Nothing else is
+   shipped. (Kit 9 deliberately dropped the old portable zip and tarball
+   attachments; the install tutorials and the version-jump section above
+   carry the reasoning.)
 5. If nothing upstream changed and the patches are unchanged, the run only
    updates its state file and stops - no build, no release, no spam.
 
