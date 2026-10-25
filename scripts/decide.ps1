@@ -199,9 +199,15 @@ if ($ordered.Count -gt $MaxBuilds) {
 }
 
 $js = @{ include = @($ordered) } | ConvertTo-Json -Compress -Depth 5
+# The workflow file cannot call length() on the include array (no such
+# expression function exists), so the decision script publishes the boolean
+# gate itself.
+$hasBuilds = if (@($ordered).Count -gt 0) { 'true' } else { 'false' }
 
 if ($OutputFile) {
     Add-Content -Path $OutputFile -Value "builds=$js"
+    Add-Content -Path $OutputFile -Value "has_builds=$hasBuilds"
 }
 Write-Output "builds=$js"
+Write-Output "has_builds=$hasBuilds"
 Write-Host ("Kit identity hash: " + $kitHash)

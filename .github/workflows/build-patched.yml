@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       builds: ${{ steps.decide.outputs.builds }}
+      has_builds: ${{ steps.decide.outputs.has_builds }}
     steps:
       - name: Check out template
         uses: actions/checkout@v4
@@ -53,7 +54,7 @@ jobs:
 
   build:
     needs: decide
-    if: ${{ fromJSON(needs.decide.outputs.builds).include != null && length(fromJSON(needs.decide.outputs.builds).include) > 0 }}
+    if: ${{ needs.decide.outputs.has_builds == 'true' }}
     strategy:
       fail-fast: false
       max-parallel: 1
