@@ -28,6 +28,23 @@ mechanisms in the workflow enforce that:
   exists in that repository — this covers copies that inherit the template's
   `.state/last-build.json` with no release history of their own.
 
+## Notifications
+
+The workflow's final `notify` job posts one message to a private chat channel
+when something deserves attention:
+
+- any pipeline failure (patch stopped applying, build broke, heartbeat failed) —
+  this is the "upstream changed, the patch needs work" alarm;
+- on publishing repositories only: a "patched X was published, grab the exe"
+  note after a successful release.
+
+It fires only when a repository secret named `ALERT_WEBHOOK` contains a
+Discord or Slack webhook URL. Create the webhook in a private channel of
+yours, save the URL as that secret, and you are subscribed. Copies created
+from the template do the same if their owner wants the service; without the
+secret every repository simply skips that job. The URL is the only stored
+value, and pointing it at a private channel leaks nothing about anyone.
+
 ## Editing the template
 
 1. Before authoring any change, absorb the bookkeeping commits first:
