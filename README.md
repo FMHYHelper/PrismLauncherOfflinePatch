@@ -285,7 +285,19 @@ new version's launcher compiled immediately, run
 **"Build patched Prism Launcher"** once after it; otherwise the next
 scheduled run does it anyway.
 
-The issue also carries a terminal route for anyone who prefers it (the
+One GitHub rule sits on top of the button: pushes that change workflow
+files cannot be made by a repository's automatic bot token, and every
+sync carries workflow files - GitHub does not even let that token hold
+the "workflows" permission. So the one-click sync needs a **one-time
+token setup**: create a fine-grained personal access token (only this
+repository; Permissions **Contents: Read and write** and **Workflows:
+Read and write**), save it as the repository secret `KIT_PUSH_TOKEN`,
+and then press the button as above. The *Template update available*
+issue spells the steps out. Copies still on kit 9 or older reach kit 10
+by the terminal route below first - their button predates this logic -
+and from kit 10 on every one-click works.
+
+The issue also carries a terminal route that needs no token at all (the
 four sync commands, plus the two rescue recipes seen in practice: a remote
 name that already exists, and a push rejected because this repository's
 heartbeat commits moved ahead of an older clone).

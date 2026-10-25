@@ -19,11 +19,23 @@
 #
 # Unlike the nudge check this is a deliberate user action, so failures are
 # loud: they turn the run red with an explanatory error instead of a
-# warning. The one soft spot is a push raced by the build workflow's state
-# heartbeat - that retries once with pull --rebase (the same rescue the
-# issue text gives to manual terminal users) before giving up. Closing
-# issues is always best effort: a closed-copy failure in the middle of an
-# otherwise successful sync is a warning, not an error.
+# warning. Push refusals come in two opposite classes, and kit 10 teaches
+# the script to tell them apart:
+#   - a race (transient): the build workflow's state heartbeat landed a
+#     commit first - retried once with pull --rebase (the same rescue the
+#     issue text gives to manual terminal users);
+#   - GitHub's workflow-file rule (permanent): pushes that change files
+#     under .github/workflows cannot be made by the default GITHUB_TOKEN -
+#     the "workflows" permission is not grantable to that token at all,
+#     and kit syncs always carry workflow files. Never retried; fails
+#     loudly with the one-time setup steps for the KIT_PUSH_TOKEN secret
+#     (a fine-grained personal access token), which - when it exists -
+#     this script uses for the push alone (token-in-URL, never stored,
+#     never logged). Copies still on kit 9 or older first reach kit 10 by
+#     the terminal route in the nudge issue: their button predates this
+#     logic.
+# Closing issues is always best effort: a closed-copy failure in the middle
+# of an otherwise successful sync is a warning, not an error.
 
 $ErrorActionPreference = 'Stop'
 
@@ -143,15 +155,97 @@ git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
 git commit -m "Sync kit files from template (kit version $templateVersion)"
 if ($LASTEXITCODE -ne 0) { throw "Could not commit the synced kit files" }
 
-# ---- push (heartbeat race: one automatic pull --rebase, then admit defeat) ----
+# ---- push: two refusal classes, opposite handling ------------------------------
 $branch = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { 'main' }
-git push origin "HEAD:$branch"
-if ($LASTEXITCODE -ne 0) {
+
+# The optional personal token: used for the push only, and only when this
+# checkout is a github.com https remote (local file-path origins - the
+# development and dry-run rigs - keep the ordinary push, so the rig stays
+# representative and nothing network-bound can ever run there).
+$kitPushUrl = $null
+$kitToken = $env:KIT_PUSH_TOKEN
+if ($kitToken) {
+  $originUrl = ''
+  try {
+    $originUrl = ([string](git remote get-url origin)).Trim()
+    if ($LASTEXITCODE -ne 0) { $originUrl = '' }
+  }
+  catch { $originUrl = '' }
+  if ($originUrl -cmatch '^https://(www\.)?github\.com/') {
+    $kitPushUrl = 'https://x-access-token:' + $kitToken + '@' + ($originUrl -creplace '^https://', '')
+    Write-Host 'Pushing with the KIT_PUSH_TOKEN credential (GitHub requires it for pushes that change workflow files).'
+  }
+  else {
+    Write-Host 'KIT_PUSH_TOKEN is set, but origin is not a github.com https URL (a local or dry-run repository); pushing normally.'
+  }
+}
+
+$PSNativeCommandUseErrorActionPreference = $false
+function Invoke-KitPush {
+  # One push attempt. The output is captured into $script:lastPush for the
+  # refusal classification and every line is echoed, exactly as an
+  # uncaptured push would print it. The capture runs under 'Continue'
+  # explicitly: on Windows PowerShell 5.1, native stderr under 'Stop'
+  # becomes a terminating NativeCommandError (a trap this kit's own gh
+  # probes hit before), and the push output is pure stderr.
+  param([string]$Branch)
+  $target = if ($kitPushUrl) { $kitPushUrl } else { 'origin' }
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $script:lastPush = @(& git push $target "HEAD:$Branch" 2>&1 | ForEach-Object { "$_" })
+  $ErrorActionPreference = $prevEap
+  foreach ($line in $script:lastPush) { Write-Host $line }
+  return $LASTEXITCODE
+}
+
+function Test-PushWasWorkflowRefusal {
+  # GitHub's rejection, seen for real in a copy's red run:
+  #   ! [remote rejected] HEAD -> main (refusing to allow a GitHub App to
+  #   create or update workflow '.github/workflows/...' without 'workflows'
+  #   permission)
+  $text = ($script:lastPush -join "`n")
+  return (($text -cmatch 'refusing to allow .* to create or update workflow') -or ($text -imatch 'without .workflows. permission'))
+}
+
+$kitWorkflowRefusalHelp = @"
+GitHub refused this push as a GitHub App (the repository's automatic bot
+token): pushes that change files under .github/workflows need the
+'workflows' permission, and GitHub does not allow that token to have it.
+This kit cannot change the rule. The fix is a one-minute personal token:
+
+  1. Create a fine-grained personal access token (GitHub, top-right avatar,
+     Settings > Developer settings > Fine-grained tokens > Generate new
+     token): repository access = ONLY this repository; repository
+     permissions: Contents = Read and write, Workflows = Read and write;
+     expiry = whatever you prefer (a fresh token replaces it when due).
+  2. In THIS repository: Settings > Secrets and variables > Actions >
+     Secrets > New repository secret. Name: KIT_PUSH_TOKEN. Value: the
+     token.
+  3. Run this workflow again. The push then lands, and every future kit
+     sync stays one-click.
+
+The 'Template update available' issue shows these steps too, plus the
+terminal route that never needs a token (the token is only for this
+button).
+"@
+
+$pushExit = Invoke-KitPush -Branch $branch
+if ($pushExit -ne 0) {
+  if (Test-PushWasWorkflowRefusal) {
+    # A permanent refusal - retrying can never help. Say so, loudly, once.
+    throw $kitWorkflowRefusalHelp
+  }
+  if ($kitPushUrl -and (($script:lastPush -join "`n") -imatch 'authentication failed')) {
+    throw "The KIT_PUSH_TOKEN credential was refused by GitHub (the push failed to authenticate): the token is expired or lacks Contents+Workflows write on this repository. Create a fresh fine-grained token and replace the KIT_PUSH_TOKEN secret, then run this workflow again."
+  }
   Write-Host "Push raced another run (likely the state heartbeat); retrying once with pull --rebase - the same rescue the nudge issue gives to terminal users."
   git pull --rebase origin "$branch"
   if ($LASTEXITCODE -ne 0) { throw "Could not rebase onto $branch (a concurrent run may still be pushing); rerun this workflow in a minute" }
-  git push origin "HEAD:$branch"
-  if ($LASTEXITCODE -ne 0) { throw "Push to $branch failed after the retry; rerun this workflow in a minute" }
+  $pushExit = Invoke-KitPush -Branch $branch
+  if ($pushExit -ne 0) {
+    if (Test-PushWasWorkflowRefusal) { throw $kitWorkflowRefusalHelp }
+    throw "Push to $branch failed after the retry; rerun this workflow in a minute"
+  }
 }
 
 Write-Host "Synced to the template: kit version $templateVersion."

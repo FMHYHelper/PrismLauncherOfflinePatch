@@ -4,6 +4,13 @@
 # "Template update available" issue. It deliberately runs only when a
 # human clicks Run workflow - updating a copy must stay an explicit,
 # user-controlled act, never automatic.
+#
+# GitHub blocks pushes that change files under .github/workflows when they
+# come from the default GITHUB_TOKEN (the "workflows" permission cannot be
+# granted to that token), and kit syncs always carry workflow files - so
+# the push inside sync-kit.ps1 prefers the optional KIT_PUSH_TOKEN secret
+# (a fine-grained personal access token) and fails loudly with setup steps
+# when the secret is missing. See that script and the nudge issue.
 
 name: Sync kit files from template
 
@@ -25,6 +32,11 @@ jobs:
       TEMPLATE_SOURCE: FMHYHelper/PrismLauncherOfflinePatch
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      # Optional personal token for the push (GitHub refuses workflow-file
+      # pushes from GITHUB_TOKEN; see the header comment). Unset secret
+      # reads as an empty string, and sync-kit.ps1 then pushes as before
+      # - failing loudly on a kit update, with the setup steps.
+      KIT_PUSH_TOKEN: ${{ secrets.KIT_PUSH_TOKEN || '' }}
     steps:
       - name: Check out this copy
         uses: actions/checkout@v4

@@ -79,7 +79,7 @@ try {
     }
 
     if ($match) {
-      $note = "Still out of date (checked UTC $day): template **$remoteVersion**, this copy **$localVersion**. The quickest sync is the one-click route in this issue's toolkit: Actions tab -> Sync kit files from template -> Run workflow."
+      $note = "Still out of date (checked UTC $day): template **$remoteVersion**, this copy **$localVersion**. The quickest sync is the one-click route in this issue's toolkit (it needs the one-time KIT_PUSH_TOKEN token setup described there): Actions tab -> Sync kit files from template -> Run workflow."
       gh issue comment $match.number --body $note
       if ($LASTEXITCODE -ne 0) { throw "gh issue comment failed (exit $LASTEXITCODE)" }
       Write-Host "Out of date; posted a status comment on issue #$($match.number)."
@@ -93,13 +93,40 @@ Nothing has stopped working: this copy keeps building with the files it already 
 
 ## Taking the update
 
-### One-click way (recommended - no terminal at all)
+### One-click way (needs a one-time personal token)
 
-1. Open the **Actions** tab of this repository.
-2. On the left list, click **"Sync kit files from template"** (it is allowed - this notice is exactly that button's job description).
-3. Click the **"Run workflow"** button, then **"Run workflow"** again to confirm.
+GitHub, by its own security rule, refuses pushes that change workflow
+files when they come from the repository's automatic bot token - and
+every kit sync carries workflow files. GitHub does not even let that
+token be granted the "workflows" permission, and this kit cannot switch
+the rule off. So the button runs on a personal token added once, and
+every future sync stays one-click from then on:
 
-An automation account (github-actions[bot], the same robot that already commits your build bookkeeping) replaces the kit files below with the template's current copies, commits and pushes them, and closes this issue immediately. No git, no terminal, no account switching. If it shows red instead, just run it again a minute later.
+1. Make a **fine-grained personal access token**: GitHub, top-right
+   avatar -> Settings -> Developer settings -> Fine-grained tokens ->
+   Generate new token. Scope it to **only this repository**, and give
+   the repository permissions **Contents: Read and write** plus
+   **Workflows: Read and write**. Expiry as you like - replacing an
+   expired token and updating the secret below is the whole maintenance
+   story.
+2. Store it in this repository as a **secret named `KIT_PUSH_TOKEN`**:
+   Settings -> Secrets and variables -> Actions -> Secrets -> New
+   repository secret (name: `KIT_PUSH_TOKEN`, value: the token). GitHub
+   only releases a secret to workflows at run time - nobody can read it
+   back afterwards, and this kit does not try.
+3. Take the update: **Actions** tab -> **"Sync kit files from
+   template"** -> **"Run workflow"**, twice to confirm. The sync pushes
+   with your token, closes this issue on the spot, and later template
+   updates stay that one same click. (A red run for any *other* reason -
+   a network hiccup, a raced heartbeat - just means run it again a
+   minute later.)
+
+If this copy is still on **kit 9 or older**: its own button predates the
+token logic, so the *very next* sync (to kit 10) must take the
+**terminal way** below. After that one-time hop, the button with the
+token applies forever. And a button run that turns red saying
+"refusing to allow a GitHub App to create or update workflow" means the
+secret is missing: step 1 above is the fix.
 
 (To also get the new version's launcher compiled right away, afterwards click **"Build patched Prism Launcher"** -> **"Run workflow"** once. Otherwise the next scheduled run does it anyway.)
 
