@@ -1,15 +1,17 @@
 # Prism Launcher Offline-Patch Template
 
-A tiny repository that runs one job on autopilot: it builds
-[Prism Launcher](https://github.com/PrismLauncher/PrismLauncher) from the
-launcher's own source releases, removes the client-side check that blocks
-creating offline accounts, and publishes **only the patched `prismlauncher.exe`
-plus the exact source patch**. Nothing else about the launcher is modified.
+A tiny repository that runs one job on autopilot: it checks
+[Prism Launcher](https://github.com/PrismLauncher/PrismLauncher) upstream
+releases daily and keeps its patch set in step with them — the shipped patch
+removes the client-side check that blocks creating offline accounts. Nothing
+else about the launcher is modified.
 
-This repo does not contain any launcher code. Every build starts from a fresh
-clone of an upstream release tag, your patch files from `patches/` are applied
-on top of it, and the result is published in the **Releases** tab. That makes the
-whole thing easy to read and easy to extend: a patch is one plain-text file.
+**This repository hosts no binaries.** It is the tool, not the distribution:
+no launcher code is stored here. Every build starts from a fresh clone of an
+upstream release tag, your patch files from `patches/` are applied on top of
+it, and the patched `prismlauncher.exe` plus the exact source patch land in
+*your own copy's* Releases tab when you run it there. That makes the whole
+thing easy to read and easy to extend: a patch is one plain-text file.
 
 ---
 
@@ -30,7 +32,7 @@ button to enable workflows.
 left, then **"Run workflow" → "Run workflow"**. Wait about 40 minutes — it is
 compiling the launcher from real source code.
 
-**Step 5.** Open the **Releases** page. Download the file ending in
+**Step 5.** Open the **Releases** page **of your own new repository**. Download the file ending in
 **`.exe`**, open your existing Prism Launcher folder (for example
 `%AppData%\PrismLauncher` or wherever the portable copy lives), and paste the
 `.exe` in, replacing the old one. **Keep a copy of the original exe first.**
@@ -57,7 +59,7 @@ drop in your account data, then return to the paste-in-the-exe routine for later
 
 The launcher's built-in updater may at some point offer the official update.
 Accepting it replaces the exe with the official one — simply paste the patched
-exe from this template's Releases again afterwards.
+exe from your own repository's Releases again afterwards.
 
 ## If a run turns red
 
@@ -87,6 +89,12 @@ the gate never lived in it; the file is only present because the launcher links
 Qt's OAuth helper for its genuine Microsoft login feature.
 
 ### How the pipeline decides what to build
+
+> **Where releases appear.** On the template itself, a scheduled run only
+> verifies that the patch still applies to upstream and updates its
+> bookkeeping — nothing is published here. In a copy created with **Use this
+> template**, the same run publishes a release in *that* repository. The
+> switch is the repository variable `no_binaries` — see MAINTAINING.md.
 
 1. On every scheduled run (06:00 UTC daily) the workflow fetches upstream
    releases and compares them with `.state/last-build.json`.
@@ -141,15 +149,16 @@ Rules that keep the pipeline honest:
 | `patches/` | the patch set applied to every build |
 | `.github/workflows/build-patched.yml` | the whole pipeline |
 | `scripts/` | decision + bookkeeping helpers (plain PowerShell) |
-| `.state/last-build.json` | what the automation has released so far |
+| `.state/last-build.json` | which tags the automation has handled so far |
 | `docs/fingerprint.txt` | provenance values for verifying bundles you produced |
 | `MAINTAINING.md` | notes for tending the template branch itself |
 
 ## License
 
-Same as upstream: **GPL-3.0-only** (`LICENSE` here). A released exe is built
-from an upstream source tag with the attached `source-patches-<tag>.patch`
-applied — that combination is all you need to rebuild it from scratch. This is
+Same as upstream: **GPL-3.0-only** (`LICENSE` here). Any exe built with this
+template comes from an upstream source tag with the attached
+`source-patches-<tag>.patch` applied — that combination is all you need to
+rebuild it from scratch. This is
 a personal-use template: enjoy it yourself, and don't strip the attribution
 when sharing the patch files. Note that Mojang's *online-mode* servers enforce
 their own authentication server-side; this affects the launcher's account

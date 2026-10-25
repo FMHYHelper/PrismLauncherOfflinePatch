@@ -44,6 +44,10 @@ jobs:
         shell: pwsh
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # true when this repository publishes releases; repositories created
+          # from the template do not define the no_binaries variable, so they
+          # publish. The template itself sets it and stays binary-free.
+          PRISM_PUBLISH: ${{ vars.no_binaries != 'true' }}
           INPUT_REF: ${{ inputs.upstream_ref }}
           INPUT_QT: ${{ inputs.qt_version }}
           INPUT_FORCE: ${{ inputs.force_rebuild }}
@@ -157,6 +161,10 @@ jobs:
           Get-ChildItem out | ForEach-Object { Write-Host "  $($_.Name)" }
 
       - name: Publish release
+        # The template repository sets the repository variable no_binaries to
+        # keep itself binary-free. Copies created from the template (or
+        # repositories pushed by the maintainer) do not set it and publish.
+        if: vars.no_binaries != 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'

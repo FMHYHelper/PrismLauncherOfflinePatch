@@ -129,10 +129,24 @@ if ($UpstreamRef) {
 else {
     if ($newestStable) {
         $isNew = ($null -eq $handledStableVer) -or ((Compare-PrismTag $newestStable.ver $handledStableVer) -gt 0)
+        # State/parity guard: repositories created from this template inherit
+        # the template's state file, which may claim tags as handled even
+        # where the copy never published anything. In a publishing
+        # repository (PRISM_PUBLISH=true, set by the workflow), a tag only
+        # counts as handled if this repo actually has a release for it.
+        # Pre-releases keep the simple state rule; they are optional anyway.
+        $publishes = ($env:PRISM_PUBLISH -eq 'true')
+        $stableReleaseMissing = ($ourTags -notcontains $newestStable.tag)
+        $needsStableBuild = $isNew -or ($publishes -and $stableReleaseMissing)
         $recipe = Get-UpstreamWindowsRecipe -Ref $newestStable.tag -Token $token
         $qt = if ($QtOverride) { $QtOverride } else { $recipe.qt_version }
-        if ($isNew) {
-            Write-Host ("New stable release: " + $newestStable.tag)
+        if ($needsStableBuild) {
+            if ($isNew) {
+                Write-Host ("New stable release: " + $newestStable.tag)
+            }
+            else {
+                Write-Host ("State marks " + $newestStable.tag + " as handled, but no release for it exists here; rebuilding.")
+            }
             Add-Candidate -Tag $newestStable.tag -IsPre $false -QtVersion $qt -QtArch $recipe.qt_arch -Vcvars $recipe.vcvars -Preset $recipe.preset -BypassExists ([bool]$Force)
         }
         elseif ($hashChanged) {
