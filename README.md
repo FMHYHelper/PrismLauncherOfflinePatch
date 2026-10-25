@@ -69,10 +69,43 @@ A failed run shows up in the repository's **Actions** tab with a red ✗ next to
 the run. Two fixes cover almost everything:
 
 - **The patch no longer applies** (upstream edited the same lines of code).
-  No broken build gets published — the run simply stops. Either wait for an
-  updated patch in `patches/`, remove the failing patch, or rerun the workflow
-  with `upstream_ref` pinned to the last tag that worked.
+  No broken build gets published — the run simply stops. Updated patches are
+  published on the template, and the *Template update available* issue is how
+  you find out (see the next section); sync it in, then rerun. As a stopgap
+  you can rerun the workflow with `upstream_ref` pinned to the last tag that
+  worked.
 - **A network hiccup** (Qt download, GitHub API). Just rerun the workflow.
+
+---
+
+## Keeping your copy in step with the template
+
+At the end of every run there is a small check: the number in `KIT-VERSION`
+in this repository is compared against the same file on the template. When
+the template has moved ahead — newer patches, workflow fixes, doc
+improvements — one issue titled **Template update available** is filed in
+this repository with the exact git commands that bring the copy up to date.
+Later runs neither duplicate nor spam it: the same open issue just gets a
+dated status comment, and it closes itself once the versions match again.
+
+The details, condensed:
+
+- The check runs *after* the build, never gates it, and fails soft. If the
+  check itself misbehaves, the run stays green and the only trace is a
+  warning line in the job log plus a note in the run summary.
+- An in-step copy files nothing and stays otherwise silent. A copy that
+  lacks `KIT-VERSION` (bootstrapped before this check existed) reads as
+  "not recorded" and therefore counts as behind until it syncs once.
+- Not interested in the nudges? Set the repository **variable**
+  `KIT_UPDATES_OFF` to `true` (Settings → Secrets and variables → Actions →
+  Variables) and the check disappears from every future run. Closing the
+  issue without syncing is not an opt-out — the next run simply files a
+  fresh one; the variable is the real off switch.
+
+The update commands in the issue replace the template's copies of the whole
+kit — `.github/workflows/`, `patches/`, `scripts/`, `docs/`, `README.md`,
+`MAINTAINING.md` and `KIT-VERSION` — while touching nothing else in the
+repository, including the `.state/` bookkeeping the runs maintain.
 
 ---
 

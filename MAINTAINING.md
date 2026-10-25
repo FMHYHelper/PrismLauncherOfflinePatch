@@ -61,6 +61,12 @@ public file under `patches/`. The rules:
   apply-test in CI order (`git apply --check` then `git apply`, ascending),
   update README + release-notes template + this list in the same commit,
   then push with the usual fetch/ff-only discipline.
+- Any change a downstream copy should receive — a new or edited patch file,
+  workflow, script, doc or README fix — also bumps the single-line number in
+  `KIT-VERSION` by 1, **in the same commit**. That number is the only signal
+  the template-update check in every copy compares (see the README section
+  *Keeping your copy in step with the template*), so a kit change without its
+  bump is a bug: every copy stays silently out of date.
 
 ## Commit identity
 
