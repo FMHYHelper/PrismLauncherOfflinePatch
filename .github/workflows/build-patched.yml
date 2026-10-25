@@ -69,6 +69,10 @@ jobs:
       PRESET: ${{ matrix.preset }}
       FORCE: ${{ matrix.force }}
       GH_TOKEN: ${{ github.token }}
+      # The working directory is the upstream clone, so gh's git-remote repo
+      # detection points at PrismLauncher/PrismLauncher. Without this pin the
+      # publish step would query/upstream-target the wrong repository.
+      GH_REPO: ${{ github.repository }}
       ARTIFACT_NAME: Windows-MSVC-Qt6
       BUILD_PLATFORM: official
     steps:
@@ -191,6 +195,11 @@ jobs:
             --notes-file $notes `
             @extra
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+
+          # Prove the release really exists in this repository before going green.
+          gh release view $tag --json tagName,isDraft | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Release $tag is not visible in this repository after create" }
+
           Write-Host "Published release $tag"
 
   finalize:
