@@ -1,6 +1,7 @@
 # notify-kit-update.ps1
 #
-# Runs at the end of every build in a repository created from the template.
+# Runs at the start of every workflow run in a repository created from the
+# template (parallel with the build, never gating or delaying anything).
 # Compares this copy's KIT-VERSION (a single-line number) against the template
 # the copy came from, and keeps exactly one issue ("Template update available")
 # in step with reality:

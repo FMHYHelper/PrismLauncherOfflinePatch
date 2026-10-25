@@ -28,6 +28,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Kit-update nudge: compares this copy's KIT-VERSION against the template's
+  # and keeps one "Template update available" issue in step. Runs FIRST, in
+  # parallel with everything else, so an out-of-date copy is told within a
+  # minute of starting a run instead of after the compiler finishes. It
+  # doesn't gate or delay the build and never turns a run red (the script is
+  # fail-soft on purpose).
+  kit-update-check:
+    if: ${{ vars.no_binaries != 'true' && vars.kit_updates_off != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      TEMPLATE_SOURCE: FMHYHelper/PrismLauncherOfflinePatch
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out the kit files
+        uses: actions/checkout@v4
+
+      - name: Compare kit version against template
+        shell: pwsh
+        run: ./scripts/notify-kit-update.ps1
+
   decide:
     runs-on: ubuntu-latest
     outputs:
@@ -240,25 +264,3 @@ jobs:
           git commit -m "state: automatic upstream heartbeat"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin HEAD
-
-  # Final nudge: compares this copy's KIT-VERSION against the template's and
-  # keeps one "Template update available" issue in step. Never gates the build
-  # and never turns a run red (the script is fail-soft on purpose).
-  kit-update-check:
-    needs: build
-    if: ${{ always() && vars.no_binaries != 'true' && vars.kit_updates_off != 'true' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    env:
-      TEMPLATE_SOURCE: FMHYHelper/PrismLauncherOfflinePatch
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      - name: Check out the kit files
-        uses: actions/checkout@v4
-
-      - name: Compare kit version against template
-        shell: pwsh
-        run: ./scripts/notify-kit-update.ps1

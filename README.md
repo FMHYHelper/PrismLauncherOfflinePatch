@@ -94,9 +94,11 @@ dated status comment, and it closes itself once the versions match again.
 
 The details, condensed:
 
-- The check runs *after* the build, never gates it, and fails soft. If the
-  check itself misbehaves, the run stays green and the only trace is a
-  warning line in the job log plus a note in the run summary.
+- The check runs at the very start of a run, in parallel with everything
+  else, and fails soft. An out-of-date copy is told within the first minute
+  of a run instead of after the compiler finishes; if the check itself
+  misbehaves, the build is untouched and the only trace is a warning line in
+  the job log plus a note in the run summary.
 - An in-step copy files nothing and stays otherwise silent. A copy that
   lacks `KIT-VERSION` (bootstrapped before this check existed) reads as
   "not recorded" and therefore counts as behind until it syncs once.
