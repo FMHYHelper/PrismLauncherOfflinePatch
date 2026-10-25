@@ -139,6 +139,43 @@ Two interactions worth knowing:
   or refreshes the release. A single failed platform turns the run red and
   no tag is advanced in state - the next run rebuilds the whole trio.
 
+## The sync-from-template button (kit 7)
+
+Since kit 7 each copy has a second, manual-only workflow:
+**Sync kit files from template** (`workflow_dispatch`). It takes the
+template update for the user - the one-click route documented in the nudge
+issue - by doing exactly what the issue's terminal commands do: point a
+`template` remote at the kit's source, fetch, overlay the kit paths
+(`.github/workflows README.md MAINTAINING.md KIT-VERSION docs patches
+scripts`), commit as `github-actions[bot]` and push.
+
+Behavioral rules, all in `scripts/sync-kit.ps1`:
+
+- **Manual only.** Plain `workflow_dispatch`, no schedule. Updating a copy
+  must stay an explicit act; the nudge keeps carrying the guidance, the
+  button just makes acting on it beginner-friendly.
+- **Fail loud, unlike the nudge.** A user pressed a button: anything that
+  cannot complete is a red run with an explanatory message, not a silent
+  warning. The single soft spot is a push raced by a build run's state
+  heartbeat - one automatic `git pull --rebase` + push retry first (the
+  same rescue the issue text teaches).
+- **Idempotent.** Equal or newer versions push nothing and close any
+  stale notices; older versions sync and then close EVERY open
+  "Template update available" issue (they are all stale the moment the
+  push lands; normally there is exactly one, but hand-closed-then-refiled
+  churn can leave strays).
+- **Overlay semantics identical to the issue commands**: files still in
+  the template are refreshed; anything else in the copy is untouched,
+  including extra files a user has added inside `patches/` or `docs/`.
+  (Known pre-existing wrinkle, shared with the terminal route: files that
+  upstream later *removed* from the kit linger until removed by hand -
+  the kit avoids removals for exactly this reason.)
+- **Cost**: one runner-minute, on demand. The button does not build
+  anything; the next build run uses the new kit files.
+- The workflow is ASCII-clean, hardcoded to `TEMPLATE_SOURCE:
+  FMHYHelper/PrismLauncherOfflinePatch`, and refuses to sync the template
+  repository with itself.
+
 ## Why the template itself publishes nothing (kit 6 shape)
 
 The `publish` job is gated on `vars.no_binaries != 'true'`, same as the old

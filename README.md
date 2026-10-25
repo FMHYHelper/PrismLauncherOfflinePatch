@@ -182,9 +182,23 @@ At the end of every run there is a small check: the number in `KIT-VERSION`
 in this repository is compared against the same file on the template. When
 the template has moved ahead - newer patches, workflow fixes, doc
 improvements - one issue titled **Template update available** is filed in
-this repository with the exact git commands that bring the copy up to date.
-Later runs neither duplicate nor spam it: the same open issue just gets a
-dated status comment, and it closes itself once the versions match again.
+this repository describing the update. Later runs neither duplicate nor
+spam it: the same open issue just gets a dated status comment, and it
+closes itself once the versions match again.
+
+**Taking the update - the one-click way.** Open the **Actions** tab, click
+**"Sync kit files from template"** in the left list, press **"Run
+workflow"**, confirm. The build's own automation account replaces the kit
+files with the template's current copies, commits and pushes them, and any
+open update notice closes on the spot - no terminal, no git. To get the
+new version's launcher compiled immediately, run
+**"Build patched Prism Launcher"** once after it; otherwise the next
+scheduled run does it anyway.
+
+The issue also carries a terminal route for anyone who prefers it (the
+four sync commands, plus the two rescue recipes seen in practice: a remote
+name that already exists, and a push rejected because this repository's
+heartbeat commits moved ahead of an older clone).
 
 The details, condensed:
 
@@ -196,14 +210,17 @@ The details, condensed:
 - An in-step copy files nothing and stays otherwise silent. A copy that
   lacks `KIT-VERSION` (bootstrapped before this check existed) reads as
   "not recorded" and therefore counts as behind until it syncs once.
+- The sync button only runs when you press it; nothing about a copy updates
+  itself without an explicit click (or, for the terminal route, an explicit
+  push).
 - Not interested in the nudges? Set the repository **variable**
   `KIT_UPDATES_OFF` to `true` (Settings > Secrets and variables > Actions >
   Variables) and the check disappears from every future run. Closing the
   issue without syncing is not an opt-out - the next run simply files a
   fresh one; the variable is the real off switch.
 
-The update commands in the issue replace the template's copies of the whole
-kit - `.github/workflows/`, `patches/`, `scripts/`, `docs/`, `README.md`,
+The update replaces the template's copies of the whole kit -
+`.github/workflows/`, `patches/`, `scripts/`, `docs/`, `README.md`,
 `MAINTAINING.md` and `KIT-VERSION` - while touching nothing else in the
 repository, including the `.state/` bookkeeping the runs maintain.
 
@@ -327,7 +344,8 @@ Rules that keep the pipeline honest:
 |---|---|
 | `patches/` | the patch set applied to every build |
 | `.github/workflows/build-patched.yml` | the whole pipeline |
-| `scripts/` | decision + bookkeeping helpers (plain PowerShell) |
+| `.github/workflows/sync-from-template.yml` | the one-click update button (manual only) |
+| `scripts/` | decision + bookkeeping + sync helpers (plain PowerShell) |
 | `.state/last-build.json` | which tags the automation has handled so far |
 | `docs/fingerprint.txt` | provenance values for verifying bundles you produced |
 | `MAINTAINING.md` | notes for tending the template branch itself |

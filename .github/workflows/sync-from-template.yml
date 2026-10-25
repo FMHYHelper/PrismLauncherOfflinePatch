@@ -1,0 +1,34 @@
+# Manually-run housekeeping workflow: takes the template's current kit on
+# behalf of the user (commit as github-actions[bot], push, close any open
+# update-notice issues). This is the one-click route documented in the
+# "Template update available" issue. It deliberately runs only when a
+# human clicks Run workflow - updating a copy must stay an explicit,
+# user-controlled act, never automatic.
+
+name: Sync kit files from template
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-from-template
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      # The kit this copy follows. Hardcoded, not an input.
+      TEMPLATE_SOURCE: FMHYHelper/PrismLauncherOfflinePatch
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out this copy
+        uses: actions/checkout@v4
+
+      - name: Take the template's update (no-op when already in step)
+        shell: pwsh
+        run: ./scripts/sync-kit.ps1
