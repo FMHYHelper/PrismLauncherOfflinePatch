@@ -25,12 +25,29 @@ What was changed — full disclosure
    (offline launches never download anything by themselves) — and the
    first-run "Add Microsoft account" wizard page is skipped.
 
+3. **Account picker fallback** (`patches/003-offline-account-picker.patch`).
+   When no account is selected for a launch and *every* account in the list
+   is an offline account, the stock "you must have a Microsoft account"
+   dialog is replaced with the stock account picker (offline accounts
+   included) so you choose the account to launch with. Empty lists, and
+   lists containing any Microsoft account, keep the stock dialog.
+
+4. **Offline launch auto-fetch** (`patches/004-offline-auto-fetch.patch`).
+   When an offline launch would stop on missing libraries and *every*
+   account in the list is an offline account, the launch first runs the
+   same public downloads an online session runs at launch time (version
+   metadata, libraries, assets) and then starts the game. Fully cached
+   launches, and launches with any Microsoft account in the list, are
+   unchanged; without internet the launch fails the way an online launch
+   would, and a partial fetch never ends in a half-instanced launch.
+
 That is the complete list of differences. Launch decisions key off the
 account actually being used: whenever a Microsoft account is selected, the
 launcher behaves exactly like the official build — including Microsoft
 accounts that do not own Minecraft (they still get the stock dialog and the
 stock demo flow) — and all installing, signing in, and account-list behavior
-remains untouched.
+remains untouched. The account-picker and auto-fetch reliefs only apply when
+every account in the list is offline; empty lists are untouched.
 
 The exe is named `PrismLauncher.exe` — the same name the official build uses —
 so it is a drop-in replacement.

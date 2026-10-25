@@ -1,0 +1,78 @@
+diff --git a/launcher/minecraft/MinecraftInstance.cpp b/launcher/minecraft/MinecraftInstance.cpp
+index c92e924..16f8b72 100644
+--- a/launcher/minecraft/MinecraftInstance.cpp
++++ b/launcher/minecraft/MinecraftInstance.cpp
+@@ -88,10 +88,12 @@
+ #include "AssetsUtils.h"
+ #include "MinecraftLoadAndCheck.h"
+ #include "PackProfile.h"
++#include "minecraft/auth/AccountList.h"
+ 
+ #include "tools/BaseProfiler.h"
+ 
+ #include <QActionGroup>
++#include <QFileInfo>
+ #include <QMainWindow>
+ #include <QScreen>
+ #include <QStandardPaths>
+@@ -1163,9 +1165,43 @@ LaunchTask* MinecraftInstance::createLaunchTask(AuthSessionPtr session, Minecraf
+         process->appendStep(step);
+     }
+ 
++    // PATCH (personal build): a launch in offline mode for a list whose every
++    // account is Offline still fetches the public version metadata when any
++    // library file is missing, so the game files land as part of the launch.
++    // Lists with any MSA account, and fully cached instances, keep the stock
++    // offline path unchanged.
++    bool offlineNeedsFetch = false;
++    if (session->launchMode == LaunchMode::Offline) {
++        const auto* accounts = APPLICATION->accounts();
++        const int accountCount = accounts->count();
++        if (accountCount > 0) {
++            bool allOffline = true;
++            for (int i = 0; i < accountCount; i++) {
++                if (accounts->at(i)->accountType() != AccountType::Offline) {
++                    allOffline = false;
++                    break;
++                }
++            }
++            if (allOffline) {
++                const auto libProfile = getPackProfile()->getProfile();
++                QStringList allJars;
++                libProfile->getLibraryFiles(runtimeContext(), allJars, allJars, getLocalLibraryPath(), binRoot(), false);
++                for (const auto& jar : allJars) {
++                    if (!QFileInfo::exists(jar)) {
++                        offlineNeedsFetch = true;
++                        break;
++                    }
++                }
++            }
++        }
++    }
++
+     // load meta
+     {
+-        auto mode = session->launchMode != LaunchMode::Offline ? Net::Mode::Online : Net::Mode::Offline;
++        auto mode = Net::Mode::Offline;
++        if (session->launchMode != LaunchMode::Offline || offlineNeedsFetch) {
++            mode = Net::Mode::Online;
++        }
+         process->appendStep(makeShared<TaskStepWrapper>(pptr, makeShared<MinecraftLoadAndCheck>(this, mode)));
+     }
+ 
+@@ -1190,6 +1226,15 @@ LaunchTask* MinecraftInstance::createLaunchTask(AuthSessionPtr session, Minecraf
+         for (auto t : createUpdateTask()) {
+             process->appendStep(makeShared<TaskStepWrapper>(pptr, t));
+         }
++    } else if (offlineNeedsFetch) {
++        // PATCH (personal build): run the same public download tasks an online
++        // launch runs - minus ClaimAccount, which exists for Microsoft
++        // sessions. The ensure step after them still verifies the result the
++        // offline way, so a partial fetch fails with the stock message.
++        for (auto t : createUpdateTask()) {
++            process->appendStep(makeShared<TaskStepWrapper>(pptr, t));
++        }
++        process->appendStep(makeShared<EnsureOfflineLibraries>(pptr, this));
+     } else {
+         process->appendStep(makeShared<EnsureOfflineLibraries>(pptr, this));
+     }

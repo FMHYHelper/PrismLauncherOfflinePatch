@@ -4,7 +4,11 @@ A tiny repository that runs one job on autopilot: it checks
 [Prism Launcher](https://github.com/PrismLauncher/PrismLauncher) upstream
 releases daily and keeps a small, fully disclosed patch set in step with them
 — it removes the client-side checks that gate offline accounts (creating one,
-and launching with one selected). Nothing else about the launcher is modified.
+and launching with one selected) and gives offline-only setups the pieces of
+an online session they cannot reach otherwise: the account picker in place of
+the login nag when nothing is selected, and the one public download pass at
+launch time when files are missing. Nothing else about the launcher is
+modified.
 
 **This repository hosts no binaries.** It is the tool, not the distribution:
 no launcher code is stored here. Every build starts from a fresh clone of an
@@ -113,7 +117,7 @@ repository, including the `.state/` bookkeeping the runs maintain.
 
 ### What the patch changes
 
-Two patches, both public files under `patches/` and shipped verbatim in every
+Four patches, all public files under `patches/` and shipped verbatim in every
 release's `source-patches-<tag>.patch`:
 
 - **001 — offline account creation** (`patches/001-disable-offline-gate.patch`):
@@ -132,12 +136,31 @@ release's `source-patches-<tag>.patch`:
   fetches the publicly distributed game files an offline launch needs —
   offline launches never download by themselves) and the first-run
   "Add Microsoft account" wizard page is skipped.
+- **003 — account picker fallback** (`patches/003-offline-account-picker.patch`):
+  when nothing is selected for a launch and *every* account in your list is
+  offline, upstream shows a dead end ("you must have a Microsoft account…
+  open the account manager?"). The patch opens the stock account picker
+  instead — the very same *Which account would you like to use?* dialog
+  upstream shows when valid accounts exist but none is set as default — with
+  your offline accounts listed, so you just pick one and go. Empty lists, and
+  lists containing any Microsoft account, keep the stock dialog.
+- **004 — offline launch auto-fetch** (`patches/004-offline-auto-fetch.patch`):
+  when an offline launch would stop on missing libraries and *every* account
+  in your list is offline, that same launch first runs the downloads an online
+  session runs at launch time (version metadata, libraries, assets) and then
+  starts the game — no manual *Download All* round-trip needed for a new
+  instance. A launch whose files are already complete touches nothing and
+  stays as quiet as before, and any list containing a Microsoft account keeps
+  stock behavior. If the fetch cannot finish (no internet), the launch fails
+  the same way an online launch would; downloads either complete or the
+  launch does not proceed.
 
-That is the complete list. Launch decisions key off the account actually being
-used: whenever a Microsoft account is selected — or merely present in the
-list — everything is byte-for-byte stock, including Microsoft accounts that do
-not own Minecraft (stock dialog, stock demo flow) and all installing, signing
-in, and account-list behavior.
+That is the complete list. The rule underneath all four: whenever a Microsoft
+account is selected — or merely present in the list — everything is
+byte-for-byte stock, including Microsoft accounts that do not own Minecraft
+(stock dialog, stock demo flow) and all installing, signing in, and
+account-list behavior. The account-picker and auto-fetch reliefs only switch
+on when *every* account in the list is offline; empty lists are untouched.
 
 `Qt6NetworkAuth.dll` is left alone — no gate ever lived in it; the file is only
 present because the launcher links Qt's OAuth helper for its genuine Microsoft
