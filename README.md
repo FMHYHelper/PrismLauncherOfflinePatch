@@ -122,17 +122,6 @@ Qt's OAuth helper for its genuine Microsoft login feature.
 You can silence the automatic schedule by deleting the `schedule:` block in
 `.github/workflows/build-patched.yml`, then run everything manually.
 
-### Failure and success pings (optional)
-
-The nightly run is the alarm itself: if upstream changes something and the
-patch stops applying, the scheduled run turns red. To also get an instant
-message in a private chat channel, add a repository **secret** named
-`ALERT_WEBHOOK` holding a Discord or Slack webhook URL. The workflow then
-sends a short plain-text notice when the pipeline breaks, and — in
-repositories that publish — one more note when a patched build is ready.
-Without the secret, nothing is ever sent; the red X and GitHub's scheduled-run
-failure emails still work by themselves.
-
 ### Writing your own patch
 
 Patches are ordinary unified diffs against an upstream tag. Recipe:

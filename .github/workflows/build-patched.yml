@@ -59,8 +59,6 @@ jobs:
   build:
     needs: decide
     if: ${{ needs.decide.outputs.has_builds == 'true' }}
-    outputs:
-      published: ${{ steps.publish.outputs.published }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -167,7 +165,6 @@ jobs:
         # keep itself binary-free. Copies created from the template (or
         # repositories pushed by the maintainer) do not set it and publish.
         if: vars.no_binaries != 'true'
-        id: publish
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -211,9 +208,6 @@ jobs:
           gh release view $tag --json tagName,isDraft | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "Release $tag is not visible in this repository after create" }
 
-          # Record it for the notify job ("release ready" ping on publishing repos).
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "published=$tag"
-
           Write-Host "Published release $tag"
 
   finalize:
@@ -246,65 +240,3 @@ jobs:
           git commit -m "state: automatic upstream heartbeat"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin HEAD
-
-  notify:
-    # Optional push alert when a webhook URL is configured as the ALERT_WEBHOOK
-    # secret. It reports pipeline failures always, and on repositories that
-    # publish also one "release ready" message per successful publish. On
-    # quiet verification days it stays silent.
-    needs: [decide, build, finalize]
-    if: always()
-    runs-on: ubuntu-latest
-    env:
-      WEBHOOK: ${{ secrets.ALERT_WEBHOOK }}
-      DECIDE_RESULT: ${{ needs.decide.result }}
-      BUILD_RESULT: ${{ needs.build.result }}
-      FINALIZE_RESULT: ${{ needs.finalize.result }}
-      PUBLISHED_TAG: ${{ needs.build.outputs.published }}
-      BUILD_JSON: ${{ needs.decide.outputs.builds }}
-    steps:
-      - name: Send alert when configured
-        if: env.WEBHOOK != ''
-        shell: pwsh
-        env:
-          REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $problems = @()
-
-          if ($env:DECIDE_RESULT -ne 'success') {
-            $problems += "nightly check failed before building (decide: $($env:DECIDE_RESULT))"
-          }
-          if ($env:BUILD_RESULT -ne 'success' -and $env:BUILD_RESULT -ne 'skipped') {
-            $tags = ''
-            try {
-              $j = $env:BUILD_JSON | ConvertFrom-Json
-              $tags = (@($j.include) | ForEach-Object { $_.tag }) -join ', '
-            } catch { }
-            if (-not $tags) { $tags = 'unknown' }
-            $problems += "build of the patched launcher failed for: $tags (build: $($env:BUILD_RESULT))"
-          }
-          if ($env:FINALIZE_RESULT -ne 'success') {
-            $problems += "state heartbeat failed (finalize: $($env:FINALIZE_RESULT))"
-          }
-
-          if ($problems.Count -gt 0) {
-            $msg = "Alert: patch pipeline problem in $($env:REPO) — " + ($problems -join ' | ') + " — details: $($env:RUN_URL)"
-          }
-          elseif ($env:PUBLISHED_TAG) {
-            $msg = "Patch pipeline ok: patched $($env:PUBLISHED_TAG) was published in $($env:REPO). Grab the exe from your Releases page — $($env:RUN_URL)"
-          }
-          else {
-            Write-Host "Nothing to alert about."
-            exit 0
-          }
-
-          $payload = @{ content = $msg; text = $msg } | ConvertTo-Json -Compress
-          try {
-            Invoke-RestMethod -Method Post -Uri $env:WEBHOOK -Body $payload -ContentType 'application/json' | Out-Null
-            Write-Host "Alert sent."
-          }
-          catch {
-            Write-Warning "Could not deliver alert to the webhook: $($_.Exception.Message)"
-          }
