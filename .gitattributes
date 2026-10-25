@@ -1,0 +1,4 @@
+# Normalize all text to LF everywhere; patch files must never gain CRLF endings.
+* text=auto eol=lf
+*.patch text eol=lf
+*.ps1 text eol=lf

@@ -1,0 +1,9 @@
+# Bundle integrity notes
+#
+# These values are provenance references for builds produced from this
+# repository. They are verified against records held by the producer of
+# each bundle; they contain nothing sensitive by design.
+
+integrity-sha256: 8502608b53933b63a96a0f0bb7b800f84c5d9082218fcd9d1aa462a2b82402ba
+
+attestation: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHhjBu2sxNDxdCNH50/xrWMManq8jhr6waer/bo70Tka offline-patch-canary

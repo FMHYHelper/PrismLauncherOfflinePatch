@@ -1,0 +1,224 @@
+name: Build patched Prism Launcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "Build a specific upstream tag/branch (e.g. 11.1.1, develop). Empty = track upstream releases automatically."
+        required: false
+        default: ""
+      qt_version:
+        description: "Force a Qt version (e.g. 6.10.2). Empty = use the tag's own recipe."
+        required: false
+        default: ""
+      force_rebuild:
+        description: "Rebuild even if a release for this tag already exists (overwrites it)."
+        required: false
+        type: boolean
+        default: false
+
+  schedule:
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-patched
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      builds: ${{ steps.decide.outputs.builds }}
+    steps:
+      - name: Check out template
+        uses: actions/checkout@v4
+        with:
+          path: kit
+
+      - id: decide
+        name: Decide what to build
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.upstream_ref }}
+          INPUT_QT: ${{ inputs.qt_version }}
+          INPUT_FORCE: ${{ inputs.force_rebuild }}
+        run: |
+          $force = $false
+          if ($env:INPUT_FORCE -eq 'true') { $force = $true }
+          & ./kit/scripts/decide.ps1 -UpstreamRef $env:INPUT_REF -QtOverride $env:INPUT_QT -Force:$force -OutputFile $env:GITHUB_OUTPUT
+
+  build:
+    needs: decide
+    if: ${{ fromJSON(needs.decide.outputs.builds).include != null && length(fromJSON(needs.decide.outputs.builds).include) > 0 }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.decide.outputs.builds) }}
+    runs-on: windows-2022
+    env:
+      PRISM_TAG: ${{ matrix.tag }}
+      PRISM_PRE: ${{ matrix.prerelease }}
+      QT_VERSION: ${{ matrix.qt_version }}
+      QT_ARCH: ${{ matrix.qt_arch }}
+      VCARCH: ${{ matrix.vcvars }}
+      PRESET: ${{ matrix.preset }}
+      FORCE: ${{ matrix.force }}
+      GH_TOKEN: ${{ github.token }}
+      ARTIFACT_NAME: Windows-MSVC-Qt6
+      BUILD_PLATFORM: official
+    steps:
+      - name: Check out template
+        uses: actions/checkout@v4
+        with:
+          path: kit
+
+      - name: Clone upstream at ${{ matrix.tag }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git init -q .
+          git remote add origin https://github.com/PrismLauncher/PrismLauncher.git
+          $ref = $env:PRISM_TAG
+          git fetch -q --depth 1 origin "refs/tags/$ref"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Tag not found, trying branch $ref"
+            git fetch -q --depth 1 origin "refs/heads/$ref"
+            if ($LASTEXITCODE -ne 0) { throw "Upstream ref $ref not found" }
+          }
+          git checkout -q --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
+          Write-Host "Cloned PrismLauncher at $ref (commit $(git rev-parse --short HEAD))"
+
+      - name: Apply patches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $patches = Get-ChildItem kit\patches -Filter '*.patch' | Sort-Object Name
+          if ($patches.Count -eq 0) { throw "No patch files found in kit/patches" }
+          foreach ($p in $patches) {
+            Write-Host "Checking $($p.Name)"
+            git apply --check --ignore-whitespace $p.FullName
+            git apply --ignore-whitespace $p.FullName
+            Write-Host "Applied $($p.Name)"
+          }
+
+      - name: Set up build dependencies (the tag's own recipe)
+        uses: ./.github/actions/setup-dependencies
+        with:
+          build-type: Release
+          artifact-name: Windows-MSVC
+          vcvars-arch: ${{ env.VCARCH }}
+          qt-version: ${{ env.QT_VERSION }}
+
+      - name: Configure (cmake --preset ${{ env.PRESET }})
+        shell: pwsh
+        run: cmake --preset $env:PRESET
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset $env:PRESET --config Release --parallel
+
+      - name: Stage release assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Get-ChildItem build -Recurse -Filter 'prismlauncher.exe' | Select-Object -First 1
+          if ($null -eq $exe) { throw "prismlauncher.exe not found in build output" }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          $exeName = "PrismLauncher-$env:PRISM_TAG-offline-patched.exe"
+          Copy-Item $exe.FullName "out\$exeName"
+
+          $patchText = New-Object System.Text.StringBuilder
+          $patchFiles = Get-ChildItem kit\patches -Filter '*.patch' | Sort-Object Name
+          foreach ($p in $patchFiles) {
+            [void]$patchText.AppendLine("# ---- upstream tag $($env:PRISM_TAG), patch file $($p.Name) ----")
+            [void]$patchText.Append([IO.File]::ReadAllText($p.FullName))
+            [void]$patchText.AppendLine("")
+          }
+          $patchPath = "out\source-patches-$env:PRISM_TAG.patch"
+          [IO.File]::WriteAllText((Join-Path (Get-Location) $patchPath), $patchText.ToString(), (New-Object System.Text.UTF8Encoding($false)))
+
+          $lines = @()
+          foreach ($f in @(Get-ChildItem out -File)) {
+            $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            $lines += "SHA256  $h  $($f.Name)"
+          }
+          [IO.File]::WriteAllText((Join-Path (Get-Location) "out\checksums.txt"), ($lines -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "Staged:"
+          Get-ChildItem out | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      - name: Publish release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = $env:PRISM_TAG
+
+          $exists = $false
+          gh release view $tag --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { $exists = $true }
+
+          if ($exists) {
+            if ($env:FORCE -eq 'True') {
+              Write-Host "Overwriting existing release $tag"
+              gh release delete $tag --yes --cleanup-tag
+              if ($LASTEXITCODE -ne 0) { throw "Could not delete release $tag" }
+            }
+            else {
+              Write-Host "Release $tag already exists; nothing to do."
+              exit 0
+            }
+          }
+
+          $notes = Join-Path (Get-Location) "release-notes.md"
+          $tmpl = [IO.File]::ReadAllText("kit\docs\release-notes-template.md")
+          $tmpl = $tmpl.Replace('{{TAG}}', $tag).Replace('{{UPSTREAM_URL}}', "https://github.com/PrismLauncher/PrismLauncher/releases/tag/$tag")
+          [IO.File]::WriteAllText($notes, $tmpl, (New-Object System.Text.UTF8Encoding($false)))
+
+          $extra = @()
+          if ($env:PRISM_PRE -eq 'True')  { $extra += '--prerelease' }
+          if ($env:PRISM_PRE -ne 'True') { $extra += '--latest' }
+
+          gh release create $tag `
+            "out\PrismLauncher-$tag-offline-patched.exe" `
+            "out\source-patches-$tag.patch" `
+            "out\checksums.txt" `
+            --title "Prism Launcher $tag (offline-patched)" `
+            --notes-file $notes `
+            @extra
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+          Write-Host "Published release $tag"
+
+  finalize:
+    needs: [decide, build]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      BUILD_JSON: ${{ needs.decide.outputs.builds }}
+      BUILD_RESULT: ${{ needs.build.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update state file
+        shell: bash
+        run: |
+          ADV=""
+          if [ "$BUILD_RESULT" = "success" ]; then ADV="--advance"; fi
+          pwsh ./scripts/update-state.ps1 -BuildsJson "$BUILD_JSON" $ADV
+
+      - name: Commit state heartbeat
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .state/last-build.json
+          if git diff --cached --quiet; then
+            echo "state unchanged; nothing to commit"
+            exit 0
+          fi
+          git commit -m "state: automatic upstream heartbeat"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin HEAD
