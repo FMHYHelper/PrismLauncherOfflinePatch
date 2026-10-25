@@ -138,7 +138,7 @@ jobs:
           $exe = Get-ChildItem build -Recurse -Filter 'prismlauncher.exe' | Select-Object -First 1
           if ($null -eq $exe) { throw "prismlauncher.exe not found in build output" }
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          $exeName = "PrismLauncher-$env:PRISM_TAG-offline-patched.exe"
+          $exeName = "PrismLauncher.exe"
           Copy-Item $exe.FullName "out\$exeName"
 
           $patchText = New-Object System.Text.StringBuilder
@@ -196,7 +196,7 @@ jobs:
           if ($env:PRISM_PRE -ne 'True') { $extra += '--latest' }
 
           gh release create $tag `
-            "out\PrismLauncher-$tag-offline-patched.exe" `
+            "out\PrismLauncher.exe" `
             "out\source-patches-$tag.patch" `
             "out\checksums.txt" `
             --title "Prism Launcher $tag (offline-patched)" `

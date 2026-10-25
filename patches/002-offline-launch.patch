@@ -1,0 +1,113 @@
+diff --git a/launcher/Application.cpp b/launcher/Application.cpp
+index 2b9433a..af7d53b 100644
+--- a/launcher/Application.cpp
++++ b/launcher/Application.cpp
+@@ -1220,7 +1220,22 @@ bool Application::createSetupWizard()
+     bool pasteInterventionRequired = settings()->get("PastebinURL") != "";
+     bool validWidgets = m_themeManager->isValidApplicationTheme(settings()->get("ApplicationTheme").toString());
+     bool validIcons = m_themeManager->isValidIconTheme(settings()->get("IconTheme").toString());
+-    bool login = !m_accounts->anyAccountIsValid() && capabilities() & Application::SupportsMSA;
++    // PATCH (personal build): when every account in the list is an Offline
++    // account, the Microsoft login page is not needed. Any MSA account in the
++    // list, owner or not, keeps stock behavior unchanged.
++    bool allOffline = [&] {
++        const int n = m_accounts->count();
++        if (n == 0) {
++            return false;
++        }
++        for (int i = 0; i < n; i++) {
++            if (m_accounts->at(i)->accountType() != AccountType::Offline) {
++                return false;
++            }
++        }
++        return true;
++    }();
++    bool login = !m_accounts->anyAccountIsValid() && !allOffline && capabilities() & Application::SupportsMSA;
+     bool themeInterventionRequired = !validWidgets || !validIcons;
+     bool wizardRequired = javaRequired || languageRequired || pasteInterventionRequired || themeInterventionRequired || askjava || login;
+     if (wizardRequired) {
+diff --git a/launcher/LaunchController.cpp b/launcher/LaunchController.cpp
+index 2b88233..e5c415f 100644
+--- a/launcher/LaunchController.cpp
++++ b/launcher/LaunchController.cpp
+@@ -92,7 +92,13 @@ void LaunchController::decideAccount()
+         m_accountToUse = accounts->at(instanceAccountIndex);
+     }
+ 
+-    if (!accounts->anyAccountIsValid()) {
++    // PATCH (personal build): decisions below key off the account this launch
++    // would actually use. An offline account is complete for offline play.
++    // Accounts of the MSA type keep the stock flow unchanged, including
++    // accounts that do not own Minecraft.
++    const bool selectedOffline =
++        m_accountToUse && m_accountToUse->accountType() == AccountType::Offline;
++    if (!accounts->anyAccountIsValid() && !selectedOffline) {
+         // Tell the user they need to log in at least one account in order to play.
+         auto reply = CustomMessageBox::selectable(m_parentWidget, tr("No Accounts"),
+                                                   tr("In order to play Minecraft, you must have at least one Microsoft "
+@@ -150,8 +156,13 @@ LaunchDecision LaunchController::decideLaunchMode()
+         }
+     }
+ 
++    // PATCH (personal build): a selected offline account launches in offline
++    // mode instead of being routed into demo play. MSA accounts, including
++    // ones without Minecraft, keep the stock behavior unchanged.
+     if (!accountToCheck) {
+-        m_actualLaunchMode = LaunchMode::Demo;
++        m_actualLaunchMode = m_accountToUse->accountType() == AccountType::Offline
++                                 ? LaunchMode::Offline
++                                 : LaunchMode::Demo;
+         return LaunchDecision::Continue;
+     }
+ 
+diff --git a/launcher/ui/pages/instance/VersionPage.cpp b/launcher/ui/pages/instance/VersionPage.cpp
+index fea759b..f5c5d7e 100644
+--- a/launcher/ui/pages/instance/VersionPage.cpp
++++ b/launcher/ui/pages/instance/VersionPage.cpp
+@@ -69,6 +69,7 @@
+ #include "Exception.h"
+ #include "icons/IconList.h"
+ #include "minecraft/PackProfile.h"
++#include "minecraft/MinecraftLoadAndCheck.h"
+ #include "minecraft/auth/AccountList.h"
+ 
+ #include "meta/Index.h"
+@@ -422,7 +423,24 @@ void VersionPage::on_actionChange_version_triggered()
+ 
+ void VersionPage::on_actionDownload_All_triggered()
+ {
+-    if (!APPLICATION->accounts()->anyAccountIsValid()) {
++    // PATCH (personal build): allow downloads for lists whose accounts are all
++    // Offline. Minecraft files are public downloads and offline launches never
++    // download anything, so this is the only way such lists can ever get a new
++    // instance ready. Any MSA account in the list keeps stock behavior.
++    bool allOffline = [] {
++        const auto* accounts = APPLICATION->accounts();
++        const int n = accounts->count();
++        if (n == 0) {
++            return false;
++        }
++        for (int i = 0; i < n; i++) {
++            if (accounts->at(i)->accountType() != AccountType::Offline) {
++                return false;
++            }
++        }
++        return true;
++    }();
++    if (!APPLICATION->accounts()->anyAccountIsValid() && !allOffline) {
+         CustomMessageBox::selectable(this, tr("Error"),
+                                      tr("Cannot download Minecraft or update instances unless you have at least "
+                                         "one account added.\nPlease add a Microsoft account."),
+@@ -436,6 +454,12 @@ void VersionPage::on_actionDownload_All_triggered()
+         return;
+     }
+     auto task = makeShared<SequentialTask>();
++    // PATCH: fully-offline lists also need the version metadata fetched once,
++    // cached for later offline launches (online launches always run this step
++    // at launch time, fully-offline lists never get there without help).
++    if (allOffline) {
++        task->addTask(makeShared<MinecraftLoadAndCheck>(m_inst, Net::Mode::Online));
++    }
+     for (auto t : updateTasks) {
+         task->addTask(t);
+     }

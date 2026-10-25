@@ -2,14 +2,15 @@
 
 A tiny repository that runs one job on autopilot: it checks
 [Prism Launcher](https://github.com/PrismLauncher/PrismLauncher) upstream
-releases daily and keeps its patch set in step with them — the shipped patch
-removes the client-side check that blocks creating offline accounts. Nothing
-else about the launcher is modified.
+releases daily and keeps a small, fully disclosed patch set in step with them
+— it removes the client-side checks that gate offline accounts (creating one,
+and launching with one selected). Nothing else about the launcher is modified.
 
 **This repository hosts no binaries.** It is the tool, not the distribution:
 no launcher code is stored here. Every build starts from a fresh clone of an
 upstream release tag, your patch files from `patches/` are applied on top of
-it, and the patched `prismlauncher.exe` plus the exact source patch land in
+it, and the patched `PrismLauncher.exe` (drop-in for the official one) plus
+the exact source patch land in
 *your own copy's* Releases tab when you run it there. That makes the whole
 thing easy to read and easy to extend: a patch is one plain-text file.
 
@@ -32,10 +33,11 @@ button to enable workflows.
 left, then **"Run workflow" → "Run workflow"**. Wait about 40 minutes — it is
 compiling the launcher from real source code.
 
-**Step 5.** Open the **Releases** page **of your own new repository**. Download the file ending in
-**`.exe`**, open your existing Prism Launcher folder (for example
-`%AppData%\PrismLauncher` or wherever the portable copy lives), and paste the
-`.exe` in, replacing the old one. **Keep a copy of the original exe first.**
+**Step 5.** Open the **Releases** page **of your own new repository**. Download
+**`PrismLauncher.exe`** (the only `.exe` there), open your existing Prism
+Launcher folder (for example `%AppData%\PrismLauncher` or wherever the portable
+copy lives), and paste it in, replacing the old one. **Keep a copy of the
+original exe first.**
 
 After that you do nothing. When the launcher team publishes a new version, a
 fresh patched exe shows up in your Releases within a day.
@@ -63,8 +65,8 @@ exe from your own repository's Releases again afterwards.
 
 ## If a run turns red
 
-Scheduled runs email you when something fails. Two fixes cover almost
-everything:
+A failed run shows up in the repository's **Actions** tab with a red ✗ next to
+the run. Two fixes cover almost everything:
 
 - **The patch no longer applies** (upstream edited the same lines of code).
   No broken build gets published — the run simply stops. Either wait for an
@@ -78,15 +80,35 @@ everything:
 
 ### What the patch changes
 
-Upstream refuses to open the *Add offline account* dialog unless at least one
-Microsoft account in your account list owns Minecraft
-(`AccountListPage::on_actionAddOffline_triggered()` →
-`AccountList::anyAccountIsValid()`). That is purely a client-side convention:
-creating an offline profile is a completely local operation (a UUID derived from
-`OfflinePlayer:<name>` and a placeholder token) and never contacts Microsoft.
-The shipped patch removes that one gate. `Qt6NetworkAuth.dll` is left alone —
-the gate never lived in it; the file is only present because the launcher links
-Qt's OAuth helper for its genuine Microsoft login feature.
+Two patches, both public files under `patches/` and shipped verbatim in every
+release's `source-patches-<tag>.patch`:
+
+- **001 — offline account creation** (`patches/001-disable-offline-gate.patch`):
+  upstream refuses to open the *Add offline account* dialog unless at least one
+  Microsoft account in your list owns Minecraft
+  (`AccountListPage::on_actionAddOffline_triggered()` →
+  `AccountList::anyAccountIsValid()`). That check is purely a client-side
+  convention: creating an offline profile is a completely local operation (a
+  UUID derived from `OfflinePlayer:<name>` and a placeholder token) and never
+  contacts Microsoft. The patch removes that one gate.
+- **002 — offline launching** (`patches/002-offline-launch.patch`): with an
+  offline account *selected* for the launch, the "you must have at least one
+  Microsoft account" dialog is skipped and the launch runs in offline mode
+  instead of being routed into demo mode. And when *every* account in your
+  list is offline, the instance page's *Download All* button works again (it
+  fetches the publicly distributed game files an offline launch needs —
+  offline launches never download by themselves) and the first-run
+  "Add Microsoft account" wizard page is skipped.
+
+That is the complete list. Launch decisions key off the account actually being
+used: whenever a Microsoft account is selected — or merely present in the
+list — everything is byte-for-byte stock, including Microsoft accounts that do
+not own Minecraft (stock dialog, stock demo flow) and all installing, signing
+in, and account-list behavior.
+
+`Qt6NetworkAuth.dll` is left alone — no gate ever lived in it; the file is only
+present because the launcher links Qt's OAuth helper for its genuine Microsoft
+login feature.
 
 ### How the pipeline decides what to build
 

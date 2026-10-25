@@ -42,6 +42,26 @@ mechanisms in the workflow enforce that:
 
 3. Never force-push the public branch; people create their own projects from it.
 
+## Patch inventory
+
+Every behavioral difference between the built exe and upstream lives in a
+public file under `patches/`. The rules:
+
+- One numbered patch file per coherent change (`NNN-short-name.patch`), plain
+  unified diff against an exact upstream tag, written to apply after the
+  lower-numbered files (the build applies them in sorted name order).
+- Every patch is described in two places, kept in step with the code: the
+  README section *What the patch changes*, and the release notes produced
+  from `docs/release-notes-template.md`. A release shipping a patch that is
+  not described in both is a bug.
+- No behavior change outside `patches/`: no hidden fork, no source edits in
+  the workflow's build step. The release's `source-patches-<tag>.patch`
+  bundle is the complete inventory of what the exe differs by.
+- Adding one: draft against a throwaway clone of the exact upstream tag,
+  apply-test in CI order (`git apply --check` then `git apply`, ascending),
+  update README + release-notes template + this list in the same commit,
+  then push with the usual fetch/ff-only discipline.
+
 ## Commit identity
 
 This repo intentionally carries no maintainer identity in its history. Use any
