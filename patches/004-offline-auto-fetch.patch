@@ -1,8 +1,10 @@
+warning: in the working copy of 'launcher/minecraft/launch/EnsureOfflineLibraries.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'launcher/minecraft/launch/EnsureOfflineLibraries.h', LF will be replaced by CRLF the next time Git touches it
 diff --git a/launcher/minecraft/MinecraftInstance.cpp b/launcher/minecraft/MinecraftInstance.cpp
-index c92e924..16f8b72 100644
+index c92e924..3d85d73 100644
 --- a/launcher/minecraft/MinecraftInstance.cpp
 +++ b/launcher/minecraft/MinecraftInstance.cpp
-@@ -88,10 +88,12 @@
+@@ -88,6 +88,7 @@
  #include "AssetsUtils.h"
  #include "MinecraftLoadAndCheck.h"
  #include "PackProfile.h"
@@ -10,41 +12,26 @@ index c92e924..16f8b72 100644
  
  #include "tools/BaseProfiler.h"
  
- #include <QActionGroup>
-+#include <QFileInfo>
- #include <QMainWindow>
- #include <QScreen>
- #include <QStandardPaths>
-@@ -1163,9 +1165,43 @@ LaunchTask* MinecraftInstance::createLaunchTask(AuthSessionPtr session, Minecraf
+@@ -1163,6 +1164,27 @@ LaunchTask* MinecraftInstance::createLaunchTask(AuthSessionPtr session, Minecraf
          process->appendStep(step);
      }
  
-+    // PATCH (personal build): a launch in offline mode for a list whose every
-+    // account is Offline still fetches the public version metadata when any
-+    // library file is missing, so the game files land as part of the launch.
-+    // Lists with any MSA account, and fully cached instances, keep the stock
-+    // offline path unchanged.
-+    bool offlineNeedsFetch = false;
++    // PATCH (personal build): an offline launch from a list whose every
++    // account is an offline account may fetch missing game files as part of
++    // the launch. The fetch runs inside the ensure-libraries step itself,
++    // after the version metadata has been resolved; that step receives the
++    // permission flag computed here. Lists with any Microsoft account, and
++    // fully cached instances, keep the stock offline path unchanged.
++    bool fetchMissingOffline = false;
 +    if (session->launchMode == LaunchMode::Offline) {
 +        const auto* accounts = APPLICATION->accounts();
 +        const int accountCount = accounts->count();
 +        if (accountCount > 0) {
-+            bool allOffline = true;
++            fetchMissingOffline = true;
 +            for (int i = 0; i < accountCount; i++) {
 +                if (accounts->at(i)->accountType() != AccountType::Offline) {
-+                    allOffline = false;
++                    fetchMissingOffline = false;
 +                    break;
-+                }
-+            }
-+            if (allOffline) {
-+                const auto libProfile = getPackProfile()->getProfile();
-+                QStringList allJars;
-+                libProfile->getLibraryFiles(runtimeContext(), allJars, allJars, getLocalLibraryPath(), binRoot(), false);
-+                for (const auto& jar : allJars) {
-+                    if (!QFileInfo::exists(jar)) {
-+                        offlineNeedsFetch = true;
-+                        break;
-+                    }
 +                }
 +            }
 +        }
@@ -52,27 +39,163 @@ index c92e924..16f8b72 100644
 +
      // load meta
      {
--        auto mode = session->launchMode != LaunchMode::Offline ? Net::Mode::Online : Net::Mode::Offline;
-+        auto mode = Net::Mode::Offline;
-+        if (session->launchMode != LaunchMode::Offline || offlineNeedsFetch) {
-+            mode = Net::Mode::Online;
-+        }
-         process->appendStep(makeShared<TaskStepWrapper>(pptr, makeShared<MinecraftLoadAndCheck>(this, mode)));
-     }
- 
-@@ -1190,6 +1226,15 @@ LaunchTask* MinecraftInstance::createLaunchTask(AuthSessionPtr session, Minecraf
-         for (auto t : createUpdateTask()) {
+         auto mode = session->launchMode != LaunchMode::Offline ? Net::Mode::Online : Net::Mode::Offline;
+@@ -1191,7 +1213,11 @@ LaunchTask* MinecraftInstance::createLaunchTask(AuthSessionPtr session, Minecraf
              process->appendStep(makeShared<TaskStepWrapper>(pptr, t));
          }
-+    } else if (offlineNeedsFetch) {
-+        // PATCH (personal build): run the same public download tasks an online
-+        // launch runs - minus ClaimAccount, which exists for Microsoft
-+        // sessions. The ensure step after them still verifies the result the
-+        // offline way, so a partial fetch fails with the stock message.
-+        for (auto t : createUpdateTask()) {
-+            process->appendStep(makeShared<TaskStepWrapper>(pptr, t));
-+        }
-+        process->appendStep(makeShared<EnsureOfflineLibraries>(pptr, this));
      } else {
-         process->appendStep(makeShared<EnsureOfflineLibraries>(pptr, this));
+-        process->appendStep(makeShared<EnsureOfflineLibraries>(pptr, this));
++        // PATCH (personal build): pass the offline auto-fetch permission
++        // computed above. With it, the ensure step runs the stock downloads
++        // before verifying, so a missing fetch still ends with the stock
++        // offline message.
++        process->appendStep(makeShared<EnsureOfflineLibraries>(pptr, this, fetchMissingOffline));
      }
+ 
+     // if there are any jar mods
+diff --git a/launcher/minecraft/launch/EnsureOfflineLibraries.cpp b/launcher/minecraft/launch/EnsureOfflineLibraries.cpp
+index 0165fbd..f295510 100644
+--- a/launcher/minecraft/launch/EnsureOfflineLibraries.cpp
++++ b/launcher/minecraft/launch/EnsureOfflineLibraries.cpp
+@@ -20,10 +20,11 @@
+ 
+ #include "minecraft/PackProfile.h"
+ 
+-EnsureOfflineLibraries::EnsureOfflineLibraries(LaunchTask* parent, MinecraftInstance* instance) : LaunchStep(parent), m_instance(instance)
++EnsureOfflineLibraries::EnsureOfflineLibraries(LaunchTask* parent, MinecraftInstance* instance, bool fetchMissing)
++    : LaunchStep(parent), m_instance(instance), m_fetchMissing(fetchMissing)
+ {}
+ 
+-void EnsureOfflineLibraries::executeTask()
++QStringList EnsureOfflineLibraries::findMissingFiles() const
+ {
+     const auto profile = m_instance->getPackProfile()->getProfile();
+     QStringList allJars;
+@@ -36,12 +37,11 @@ void EnsureOfflineLibraries::executeTask()
+             missing.append(jar);
+         }
+     }
++    return missing;
++}
+ 
+-    if (missing.isEmpty()) {
+-        emitSucceeded();
+-        return;
+-    }
+-
++void EnsureOfflineLibraries::reportMissingFiles(const QStringList& missing)
++{
+     emit logLine("Missing libraries:", MessageLevel::Error);
+     for (const auto& jar : missing) {
+         emit logLine("  " + jar, MessageLevel::Error);
+@@ -51,3 +51,72 @@ void EnsureOfflineLibraries::executeTask()
+                  MessageLevel::Fatal);
+     emitFailed("Required libraries are missing");
+ }
++
++void EnsureOfflineLibraries::executeTask()
++{
++    const QStringList missing = findMissingFiles();
++    if (missing.isEmpty()) {
++        emitSucceeded();
++        return;
++    }
++
++    // PATCH (personal build): the stock offline path stops here with the
++    // missing-file report below. When launching with a list whose every
++    // account is an offline account, download what is missing first, using
++    // the same public update steps an online launch runs, and then verify
++    // the result the stock way.
++    if (!m_fetchMissing) {
++        reportMissingFiles(missing);
++        return;
++    }
++
++    emit logLine(tr("Some game files are missing. Downloading them with the regular install steps, then the launch continues."),
++                 MessageLevel::Launcher);
++    m_fetchQueue = m_instance->createUpdateTask();
++    startNextFetch();
++}
++
++void EnsureOfflineLibraries::startNextFetch()
++{
++    m_currentFetch = nullptr;
++    if (m_fetchIndex >= m_fetchQueue.size()) {
++        verifyAfterFetch();
++        return;
++    }
++
++    m_currentFetch = m_fetchQueue.at(m_fetchIndex++);
++    propagateFromOther(m_currentFetch.get());
++    connect(m_currentFetch.get(), &Task::succeeded, this, [this] { startNextFetch(); });
++    connect(m_currentFetch.get(), &Task::failed, this, [this](QString reason) {
++        m_currentFetch = nullptr;
++        emitFailed(reason);
++    });
++    connect(m_currentFetch.get(), &Task::aborted, this, [this] {
++        m_currentFetch = nullptr;
++        emitAborted();
++    });
++    m_currentFetch->start();
++}
++
++void EnsureOfflineLibraries::verifyAfterFetch()
++{
++    const QStringList missing = findMissingFiles();
++    if (missing.isEmpty()) {
++        emitSucceeded();
++        return;
++    }
++    reportMissingFiles(missing);
++}
++
++bool EnsureOfflineLibraries::canAbort() const
++{
++    return m_currentFetch && m_currentFetch->canAbort();
++}
++
++bool EnsureOfflineLibraries::abort()
++{
++    if (m_currentFetch && m_currentFetch->canAbort()) {
++        return m_currentFetch->abort();
++    }
++    return false;
++}
+diff --git a/launcher/minecraft/launch/EnsureOfflineLibraries.h b/launcher/minecraft/launch/EnsureOfflineLibraries.h
+index 87c0536..8695938 100644
+--- a/launcher/minecraft/launch/EnsureOfflineLibraries.h
++++ b/launcher/minecraft/launch/EnsureOfflineLibraries.h
+@@ -25,12 +25,31 @@ class EnsureOfflineLibraries : public LaunchStep {
+     Q_OBJECT
+ 
+    public:
+-    explicit EnsureOfflineLibraries(LaunchTask* parent, MinecraftInstance* instance);
++    // PATCH (personal build): fetchMissing allows the step to download missing
++    // game files with the same public update steps an online launch runs,
++    // before the stock offline verification below. The flag is decided at
++    // launch-task creation and only set when every account in the list is an
++    // offline account.
++    explicit EnsureOfflineLibraries(LaunchTask* parent, MinecraftInstance* instance, bool fetchMissing = false);
+     ~EnsureOfflineLibraries() override = default;
+ 
+     void executeTask() override;
+-    bool canAbort() const override { return false; }
++    bool canAbort() const override;
++    bool abort() override;
++
++   private:
++    QStringList findMissingFiles() const;
++    void reportMissingFiles(const QStringList& missing);
++    void startNextFetch();
++    void verifyAfterFetch();
+ 
+    private:
+     MinecraftInstance* m_instance;
++    bool m_fetchMissing = false;
++    // kept alive for the whole step: destroying a sender while it is still
++    // emitting its finish signal would be undefined behavior, so the queue
++    // only releases its tasks when the step itself is destroyed.
++    QList<Task::Ptr> m_fetchQueue;
++    Task::Ptr m_currentFetch;
++    int m_fetchIndex = 0;
+ };
