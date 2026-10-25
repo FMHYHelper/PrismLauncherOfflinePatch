@@ -113,8 +113,15 @@ foreach ($tag in @($byTag.Keys)) {
 
     # 4. the release itself: create, overwrite on force, refresh otherwise
     $exists = $false
-    gh release view $tag --json tagName 2>$null | Out-Null
-    if ($LASTEXITCODE -eq 0) { $exists = $true }
+    # (Deliberately no 2>$null on the gh call: under ErrorActionPreference
+    # 'Stop' an in-script stderr redirect turns native stderr into a
+    # terminating NativeCommandError on Windows PowerShell 5.1 - the same
+    # trap already fixed once each in sync-kit.ps1 and notify-kit-update.ps1.)
+    try {
+        gh release view $tag --json tagName | Out-Null
+        if ($LASTEXITCODE -eq 0) { $exists = $true }
+    }
+    catch { }
 
     if ($exists -and $m.force) {
         Write-Host ("Overwriting existing release " + $tag)

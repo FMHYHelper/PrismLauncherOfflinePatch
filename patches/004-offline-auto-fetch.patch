@@ -1,5 +1,3 @@
-warning: in the working copy of 'launcher/minecraft/launch/EnsureOfflineLibraries.cpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'launcher/minecraft/launch/EnsureOfflineLibraries.h', LF will be replaced by CRLF the next time Git touches it
 diff --git a/launcher/minecraft/MinecraftInstance.cpp b/launcher/minecraft/MinecraftInstance.cpp
 index c92e924..3d85d73 100644
 --- a/launcher/minecraft/MinecraftInstance.cpp
