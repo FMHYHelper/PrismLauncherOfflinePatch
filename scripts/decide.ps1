@@ -1,11 +1,27 @@
 # Decides what this run should build. Writes a "builds=<json>" entry that the
-# workflow turns into a job matrix. See README.md for the policy.
+# workflow turns into a job matrix - one job per (tag, platform) pair. See
+# README.md for the policy.
 #
 #   - On scheduled/default runs: newest unhandled upstream stable tag, plus the
 #     newest upstream pre-release tag but only when it outranks the stable
 #     baseline. Stable sorts before pre so a stable is attempted first.
+#     Every selected tag is offered for each enabled platform: Windows (MSVC)
+#     for the drop-in exe and portable zip, Linux (x86_64) for the AppImage
+#     and portable tarball, and macOS (universal) for the DMG.
 #   - With -UpstreamRef: exactly that ref (branch or tag), state untouched.
 #   - With -Force: rebuild even if a release for the tag already exists here.
+#   - KIT_PLATFORMS (the repositories variable `platforms`) filters the
+#     platform list: comma or space separated subset of windows,linux,macos;
+#     empty or 'all' means all of them.
+#
+# Per-platform recipes come from the upstream tag's own CI configuration.
+# Strictness when a recipe cannot be read:
+#   - Windows on a stable or manually requested ref: fatal. Building nothing
+#     is better than publishing something half-defined.
+#   - Windows on a pre-release: skip the pre-release, never block the stable.
+#   - Linux/macOS anywhere: skip that platform with a warning; the other
+#     platforms still build. Upstream may restructure its Linux/macOS CI at
+#     any time, and that must not cost a copy its Windows exe.
 #
 # Runs on any Windows PowerShell 5.1+ or pwsh, including Linux runners.
 
@@ -95,23 +111,19 @@ if (-not $env:KIT_TEST_RELEASES_FILE -and $env:GITHUB_REPOSITORY) {
 # ------------------------------------------------------------ candidates ----
 $handledStableVer = ConvertFrom-PrismTag $state.handled_stable
 $handledPreVer    = ConvertFrom-PrismTag $state.handled_pre
-$builds = New-Object System.Collections.ArrayList
+$candidates = New-Object System.Collections.ArrayList
 
 function Add-Candidate {
-    param($Tag, [bool]$IsPre, [string]$QtVersion, [string]$QtArch, [string]$Vcvars, [string]$Preset, [bool]$BypassExists)
+    param($Tag, [bool]$IsPre, [bool]$BypassExists)
 
     if (-not $BypassExists -and ($ourTags -contains $Tag)) {
         Write-Host "Release for $Tag already exists here; skipping."
         return
     }
-    [void]$script:builds.Add([pscustomobject]@{
-        tag        = $Tag
-        prerelease = $IsPre
-        qt_version = $QtVersion
-        qt_arch    = $QtArch
-        vcvars     = $Vcvars
-        preset     = $Preset
-        force      = $BypassExists
+    [void]$script:candidates.Add([pscustomobject]@{
+        tag   = $Tag
+        pre   = $IsPre
+        force = $BypassExists
     })
 }
 
@@ -121,10 +133,8 @@ if ($UpstreamRef) {
     $manualEntry = $published | Where-Object { [string]$_.tag_name -eq $UpstreamRef } | Select-Object -First 1
     if ($manualEntry) { $flag = [bool]$manualEntry.prerelease }
 
-    $recipe = Get-UpstreamWindowsRecipe -Ref $UpstreamRef -Token $token
-    $qt = if ($QtOverride) { $QtOverride } else { $recipe.qt_version }
-    Add-Candidate -Tag $UpstreamRef -IsPre $flag -QtVersion $qt -QtArch $recipe.qt_arch -Vcvars $recipe.vcvars -Preset $recipe.preset -BypassExists ([bool]$Force)
-    Write-Host ("Manual ref requested: " + $UpstreamRef + " (prerelease=" + $flag + ", qt=" + $qt + ")")
+    Add-Candidate -Tag $UpstreamRef -IsPre $flag -BypassExists ([bool]$Force)
+    Write-Host ("Manual ref requested: " + $UpstreamRef + " (prerelease=" + $flag + ")")
 }
 else {
     if ($newestStable) {
@@ -138,8 +148,6 @@ else {
         $publishes = ($env:PRISM_PUBLISH -eq 'true')
         $stableReleaseMissing = ($ourTags -notcontains $newestStable.tag)
         $needsStableBuild = $isNew -or ($publishes -and $stableReleaseMissing)
-        $recipe = Get-UpstreamWindowsRecipe -Ref $newestStable.tag -Token $token
-        $qt = if ($QtOverride) { $QtOverride } else { $recipe.qt_version }
         if ($needsStableBuild) {
             if ($isNew) {
                 Write-Host ("New stable release: " + $newestStable.tag)
@@ -147,11 +155,11 @@ else {
             else {
                 Write-Host ("State marks " + $newestStable.tag + " as handled, but no release for it exists here; rebuilding.")
             }
-            Add-Candidate -Tag $newestStable.tag -IsPre $false -QtVersion $qt -QtArch $recipe.qt_arch -Vcvars $recipe.vcvars -Preset $recipe.preset -BypassExists ([bool]$Force)
+            Add-Candidate -Tag $newestStable.tag -IsPre $false -BypassExists ([bool]$Force)
         }
         elseif ($hashChanged) {
             Write-Host ("Patch set or recipe changed; offering a rebuild of " + $newestStable.tag)
-            Add-Candidate -Tag $newestStable.tag -IsPre $false -QtVersion $qt -QtArch $recipe.qt_arch -Vcvars $recipe.vcvars -Preset $recipe.preset -BypassExists ([bool]$Force)
+            Add-Candidate -Tag $newestStable.tag -IsPre $false -BypassExists ([bool]$Force)
         }
         else {
             Write-Host ("Stable " + $newestStable.tag + " already handled.")
@@ -166,57 +174,70 @@ else {
             if ($preNew -and -not $alreadyHandled) {
                 Write-Host ("New pre-release that outranks the stable baseline: " + $newestPre.tag)
                 $preEntry = $known | Where-Object { $_.tag -eq $newestPre.tag } | Select-Object -First 1
-                # A pre-release is optional: if its build recipe cannot be read
-                # (missing file, transient upstream change), skip it and let the
-                # next daily run retry. This must never block the stable build.
-                $preRecipe = $null
-                try {
-                    $preRecipe = Get-UpstreamWindowsRecipe -Ref $newestPre.tag -Token $token
-                }
-                catch {
-                    Write-Warning ("Could not read the build recipe for pre-release " + $newestPre.tag + " (" + $_.Exception.Message + "); skipping it this run.")
-                }
-                if ($preRecipe) {
-                    $preQt = if ($QtOverride) { $QtOverride } else { $preRecipe.qt_version }
-                    Add-Candidate -Tag $newestPre.tag -IsPre ([bool]$preEntry.pre) -QtVersion $preQt -QtArch $preRecipe.qt_arch -Vcvars $preRecipe.vcvars -Preset $preRecipe.preset -BypassExists ([bool]$Force)
-                }
+                Add-Candidate -Tag $newestPre.tag -IsPre ([bool]$preEntry.pre) -BypassExists ([bool]$Force)
             }
         }
     }
     elseif (($newestPre) -and ($null -eq $handledStableVer)) {
         # upstream only has pre-releases so far
         $preEntry = $known | Where-Object { $_.tag -eq $newestPre.tag } | Select-Object -First 1
-        $preRecipe = $null
-        try {
-            $preRecipe = Get-UpstreamWindowsRecipe -Ref $newestPre.tag -Token $token
-        }
-        catch {
-            Write-Warning ("Could not read the build recipe for pre-release " + $newestPre.tag + " (" + $_.Exception.Message + "); skipping it this run.")
-        }
-        if ($preRecipe) {
-            Write-Host ("No stable releases yet; offering " + $newestPre.tag)
-            $preQt = if ($QtOverride) { $QtOverride } else { $preRecipe.qt_version }
-            Add-Candidate -Tag $newestPre.tag -IsPre ([bool]$preEntry.pre) -QtVersion $preQt -QtArch $preRecipe.qt_arch -Vcvars $preRecipe.vcvars -Preset $preRecipe.preset -BypassExists ([bool]$Force)
-        }
+        Write-Host ("No stable releases yet; offering " + $newestPre.tag)
+        Add-Candidate -Tag $newestPre.tag -IsPre ([bool]$preEntry.pre) -BypassExists ([bool]$Force)
     }
     elseif (-not $newestStable) {
         Write-Warning 'No parseable upstream releases found.'
     }
 }
 
-# --------------------------------------------------------------- output ----
-# stable first, then pre; cap the work per run
-$ordered = @() + @($builds | Where-Object { -not $_.prerelease }) + @($builds | Where-Object { $_.prerelease })
-if ($ordered.Count -gt $MaxBuilds) {
-    Write-Host ("Capping run at the first $MaxBuilds builds of " + $ordered.Count)
-    $ordered = $ordered[0..($MaxBuilds - 1)]
+# ------------------------------------------------------------ ordering ----
+# stable first, then pre; cap the work per run at tag level (each selected tag
+# expands into one build per enabled platform below)
+$orderedTags = @() + @($candidates | Where-Object { -not $_.pre }) + @($candidates | Where-Object { $_.pre })
+if ($orderedTags.Count -gt $MaxBuilds) {
+    Write-Host ("Capping run at the first $MaxBuilds builds of " + $orderedTags.Count)
+    $orderedTags = $orderedTags[0..($MaxBuilds - 1)]
 }
 
-$js = @{ include = @($ordered) } | ConvertTo-Json -Compress -Depth 5
+# ---------------------------------------------------------- platforms ----
+$platforms = Resolve-KitPlatforms -Spec $env:KIT_PLATFORMS
+if ($orderedTags.Count) {
+    Write-Host ("Platforms this run: " + ($platforms -join ', '))
+}
+
+$entries = New-Object System.Collections.ArrayList
+foreach ($c in @($orderedTags)) {
+    foreach ($p in $platforms) {
+        try {
+            $r = Get-UpstreamPlatformRecipe -Ref $c.tag -Platform $p -Token $token
+        }
+        catch {
+            if (($p -eq 'windows') -and (-not $c.pre)) { throw }
+            Write-Warning ("No recipe for " + $p + " at " + $c.tag + " (" + $_.Exception.Message + "); skipping it this run.")
+            continue
+        }
+        $qt = if ($QtOverride) { $QtOverride } else { $r.qt_version }
+        [void]$entries.Add([pscustomobject]@{
+            tag           = $c.tag
+            prerelease    = [bool]$c.pre
+            force         = [bool]$c.force
+            platform      = $p
+            os            = $r.os
+            artifact_name = $r.artifact_name
+            preset        = $r.preset
+            qt_version    = $qt
+            vcvars        = $r.vcvars
+            qt_arch       = $r.qt_arch
+            macosx_target = $r.macosx_target
+        })
+    }
+}
+
+# --------------------------------------------------------------- output ----
+$js = @{ include = @($entries) } | ConvertTo-Json -Compress -Depth 5
 # The workflow file cannot call length() on the include array (no such
 # expression function exists), so the decision script publishes the boolean
 # gate itself.
-$hasBuilds = if (@($ordered).Count -gt 0) { 'true' } else { 'false' }
+$hasBuilds = if (@($entries).Count -gt 0) { 'true' } else { 'false' }
 
 if ($OutputFile) {
     Add-Content -Path $OutputFile -Value "builds=$js"

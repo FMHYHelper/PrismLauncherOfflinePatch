@@ -80,3 +80,68 @@ The automation commits as the standard GitHub Actions identity.
 verify their own builds. Both are opaque by design: one is a hash with no public
 preimage, the other a public verification key. They are not decoded here and
 should not be.
+
+## Multi-platform builds (kit 6)
+
+Since kit 6 a run builds every platform the official release leads with, in
+parallel, and pools them into one release per tag:
+
+- **Windows-MSVC** (`windows-2022`): the bare `PrismLauncher.exe` plus
+  `PrismLauncher-Windows-MSVC-Portable-<tag>.zip` from the tag's own
+  packaging action. The NSIS installer is built as a side effect of that
+  action but intentionally not attached: an unsigned installer adds
+  SmartScreen friction for nothing, the portable zip covers the same need.
+- **Linux x86_64** (`ubuntu-24.04`): AppImage + portable tarball from the
+  tag's own packaging action. GPG signing inputs stay unset, so the
+  AppImage is unsigned (the action warns and continues). Its zsync update
+  field points at the copy's own releases; it is harmless and unused here,
+  since the in-app updater is official-build territory.
+- **macOS universal** (`macos-26`, deployment 12.0, Qt 6.9.3): DMG, ad-hoc
+  signed (`AdhocSignedApp.entitlements`), notarization skipped without
+  credentials. This is the only channel macOS has on the kit - the Sparkle
+  self-updater path stays unused, so macOS updates are manual replacements.
+
+### How the recipes are read
+
+`scripts/common.ps1` reads each platform's matrix entry out of the tag's own
+`build.yml` (`Get-UpstreamPlatformRecipe`) and validates presets against the
+tag's `CMakePresets.json`. Strictness when a recipe cannot be read:
+
+- Windows recipe on a **stable** tag or a **manual** `upstream_ref`: fatal.
+  No build, no release, no state advance - the run shows red and retries.
+- Windows recipe on a **pre-release**: that pre-release is skipped, so it
+  can never block the stable build.
+- Linux/macOS recipes anywhere: the platform is skipped with a warning and
+  everything else still builds. Upstream restructuring its Linux or macOS
+  CI must never cost a copy its Windows exe.
+
+### The `platforms` repository variable
+
+`Settings > Secrets and variables > Actions > Variables > platforms`:
+comma or space separated subset of `windows`, `linux`, `macos`; empty or
+`all` means all three. A typo degrades gracefully (unknown names are warned
+about and ignored; an entirely invalid value builds all platforms instead
+of silently building nothing).
+
+Cost picture (standard runners): on a **public** repository all three
+platforms are free. On private repositories minutes multiply: Linux 1x,
+Windows 2x, macOS 10x - hence the variable.
+
+Two interactions worth knowing:
+
+- `force_rebuild` deletes and recreates a release, so the rebuilt release
+  contains only what this run produced. A rebuild while `platforms` excludes
+  a platform makes that platform's files vanish until the next unfiltered
+  build of the same tag - rebuild unfiltered to restore the full set.
+- The publish step no longer lives inside the build jobs: build jobs only
+  upload `release-<tag>-<platform>` artifacts, and one `publish` job merges
+  them per tag (patch bundle, one checksums.txt, release notes) and creates
+  or refreshes the release. A single failed platform turns the run red and
+  no tag is advanced in state - the next run rebuilds the whole trio.
+
+## Why the template itself publishes nothing (kit 6 shape)
+
+The `publish` job is gated on `vars.no_binaries != 'true'`, same as the old
+in-build publish step was. On this template the build matrix still runs - it
+proves the patches keep applying to real upstream tags - and then nothing is
+published; the finalize job treats a skipped publish as normal there.

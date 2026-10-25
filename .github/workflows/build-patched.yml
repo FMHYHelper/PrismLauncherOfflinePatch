@@ -72,6 +72,11 @@ jobs:
           # from the template do not define the no_binaries variable, so they
           # publish. The template itself sets it and stays binary-free.
           PRISM_PUBLISH: ${{ vars.no_binaries != 'true' }}
+          # Which platforms to build (the repositories variable `platforms`):
+          # comma or space separated subset of windows,linux,macos, or empty /
+          # 'all' for every platform. Lets cost-sensitive copies (e.g. private
+          # repositories running macOS runners) slim the matrix down.
+          KIT_PLATFORMS: ${{ vars.platforms || '' }}
           INPUT_REF: ${{ inputs.upstream_ref }}
           INPUT_QT: ${{ inputs.qt_version }}
           INPUT_FORCE: ${{ inputs.force_rebuild }}
@@ -85,23 +90,14 @@ jobs:
     if: ${{ needs.decide.outputs.has_builds == 'true' }}
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix: ${{ fromJSON(needs.decide.outputs.builds) }}
-    runs-on: windows-2022
+    runs-on: ${{ matrix.os }}
     env:
       PRISM_TAG: ${{ matrix.tag }}
-      PRISM_PRE: ${{ matrix.prerelease }}
-      QT_VERSION: ${{ matrix.qt_version }}
-      QT_ARCH: ${{ matrix.qt_arch }}
-      VCARCH: ${{ matrix.vcvars }}
+      # The macOS preset builds a universal (arm64 + x86_64) binary; the
+      # deployment target comes from the tag's own matrix.
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macosx_target }}
       PRESET: ${{ matrix.preset }}
-      FORCE: ${{ matrix.force }}
-      GH_TOKEN: ${{ github.token }}
-      # The working directory is the upstream clone, so gh's git-remote repo
-      # detection points at PrismLauncher/PrismLauncher. Without this pin the
-      # publish step would query/upstream-target the wrong repository.
-      GH_REPO: ${{ github.repository }}
-      ARTIFACT_NAME: Windows-MSVC-Qt6
       BUILD_PLATFORM: official
     steps:
       - name: Check out template
@@ -130,7 +126,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $patches = Get-ChildItem kit\patches -Filter '*.patch' | Sort-Object Name
+          $patches = Get-ChildItem kit/patches -Filter '*.patch' | Sort-Object Name
           if ($patches.Count -eq 0) { throw "No patch files found in kit/patches" }
           foreach ($p in $patches) {
             Write-Host "Checking $($p.Name)"
@@ -143,11 +139,11 @@ jobs:
         uses: ./.github/actions/setup-dependencies
         with:
           build-type: Release
-          artifact-name: Windows-MSVC
-          vcvars-arch: ${{ env.VCARCH }}
-          qt-version: ${{ env.QT_VERSION }}
+          artifact-name: ${{ matrix.artifact_name }}
+          vcvars-arch: ${{ matrix.vcvars }}
+          qt-version: ${{ matrix.qt_version }}
 
-      - name: Configure (cmake --preset ${{ env.PRESET }})
+      - name: Configure (cmake --preset ${{ matrix.preset }})
         shell: pwsh
         run: cmake --preset $env:PRESET
 
@@ -155,92 +151,112 @@ jobs:
         shell: pwsh
         run: cmake --build --preset $env:PRESET --config Release --parallel
 
+      - name: Package (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        uses: ./.github/actions/package/linux
+        with:
+          version: ${{ matrix.tag }}
+          build-type: Release
+          artifact-name: ${{ matrix.artifact_name }}
+          qt-version: ${{ matrix.qt_version }}
+
+      - name: Package (macOS)
+        if: ${{ runner.os == 'macOS' }}
+        uses: ./.github/actions/package/macos
+        with:
+          version: ${{ matrix.tag }}
+          build-type: Release
+          artifact-name: ${{ matrix.artifact_name }}
+
+      - name: Package (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/package/windows
+        env:
+          # Without Azure Trusted Signing credentials the tag's own packaging
+          # action skips code signing with a warning; it never fails the run.
+          CI_HAS_ACCESS_TO_AZURE: ${{ vars.CI_HAS_ACCESS_TO_AZURE || '' }}
+        with:
+          version: ${{ matrix.tag }}
+          build-type: Release
+          artifact-name: ${{ matrix.artifact_name }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
       - name: Stage release assets
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = Get-ChildItem build -Recurse -Filter 'prismlauncher.exe' | Select-Object -First 1
-          if ($null -eq $exe) { throw "prismlauncher.exe not found in build output" }
-          New-Item -ItemType Directory -Force -Path out | Out-Null
-          $exeName = "PrismLauncher.exe"
-          Copy-Item $exe.FullName "out\$exeName"
-
-          $patchText = New-Object System.Text.StringBuilder
-          $patchFiles = Get-ChildItem kit\patches -Filter '*.patch' | Sort-Object Name
-          foreach ($p in $patchFiles) {
-            [void]$patchText.AppendLine("# ---- upstream tag $($env:PRISM_TAG), patch file $($p.Name) ----")
-            [void]$patchText.Append([IO.File]::ReadAllText($p.FullName))
-            [void]$patchText.AppendLine("")
-          }
-          $patchPath = "out\source-patches-$env:PRISM_TAG.patch"
-          [IO.File]::WriteAllText((Join-Path (Get-Location) $patchPath), $patchText.ToString(), (New-Object System.Text.UTF8Encoding($false)))
-
-          $lines = @()
-          foreach ($f in @(Get-ChildItem out -File)) {
-            $h = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            $lines += "SHA256  $h  $($f.Name)"
-          }
-          [IO.File]::WriteAllText((Join-Path (Get-Location) "out\checksums.txt"), ($lines -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
-          Write-Host "Staged:"
-          Get-ChildItem out | ForEach-Object { Write-Host "  $($_.Name)" }
-
-      - name: Publish release
-        # The template repository sets the repository variable no_binaries to
-        # keep itself binary-free. Copies created from the template (or
-        # repositories pushed by the maintainer) do not set it and publish.
-        if: vars.no_binaries != 'true'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
           $tag = $env:PRISM_TAG
-
-          $exists = $false
-          gh release view $tag --json tagName 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) { $exists = $true }
-
-          if ($exists) {
-            if ($env:FORCE -eq 'True') {
-              Write-Host "Overwriting existing release $tag"
-              gh release delete $tag --yes --cleanup-tag
-              if ($LASTEXITCODE -ne 0) { throw "Could not delete release $tag" }
-            }
-            else {
-              Write-Host "Release $tag already exists; nothing to do."
-              exit 0
-            }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          if ($env:RUNNER_OS -eq 'Windows') {
+            $exe = Get-ChildItem build -Recurse -File | Where-Object { $_.Name -ieq 'prismlauncher.exe' } | Select-Object -First 1
+            if ($null -eq $exe) { throw "prismlauncher.exe not found in build output" }
+            Copy-Item $exe.FullName "out/PrismLauncher.exe"
+            if (-not (Test-Path install-portable)) { throw "install-portable folder not produced by packaging" }
+            Compress-Archive -Path (Join-Path (Get-Location) 'install-portable/*') -DestinationPath (Join-Path (Get-Location) "out/PrismLauncher-Windows-MSVC-Portable-$tag.zip")
           }
+          elseif ($env:RUNNER_OS -eq 'Linux') {
+            $appimage = Get-ChildItem -File | Where-Object { $_.Name -like "PrismLauncher-Linux-*x86_64.AppImage" } | Select-Object -First 1
+            if ($null -eq $appimage) { throw "AppImage not found in workspace" }
+            Move-Item $appimage.FullName "out/PrismLauncher-Linux-x86_64-$tag.AppImage"
+            $tarball = Get-ChildItem -File | Where-Object { $_.Name -eq 'PrismLauncher-portable.tar.gz' } | Select-Object -First 1
+            if ($null -eq $tarball) { throw "portable tarball not found in workspace" }
+            Move-Item $tarball.FullName "out/PrismLauncher-Linux-Qt6-Portable-$tag.tar.gz"
+          }
+          else {
+            $dmg = Get-ChildItem -File -Filter "PrismLauncher.dmg" | Select-Object -First 1
+            if ($null -eq $dmg) { throw "DMG not found in workspace" }
+            Move-Item $dmg.FullName "out/PrismLauncher-macOS-$tag.dmg"
+          }
+          Write-Host "Staged:"
+          Get-ChildItem out -File | ForEach-Object { Write-Host "  $($_.Name)" }
 
-          $notes = Join-Path (Get-Location) "release-notes.md"
-          $tmpl = [IO.File]::ReadAllText("kit\docs\release-notes-template.md")
-          $tmpl = $tmpl.Replace('{{TAG}}', $tag).Replace('{{UPSTREAM_URL}}', "https://github.com/PrismLauncher/PrismLauncher/releases/tag/$tag")
-          [IO.File]::WriteAllText($notes, $tmpl, (New-Object System.Text.UTF8Encoding($false)))
+      - name: Upload for publishing
+        uses: actions/upload-artifact@v4
+        with:
+          # The publish job groups these directories by tag; the name format
+          # is parsed by scripts/publish.ps1 - keep tag and platform suffix.
+          name: release-${{ matrix.tag }}-${{ matrix.platform }}
+          path: out/**
+          if-no-files-found: error
 
-          $extra = @()
-          if ($env:PRISM_PRE -eq 'True')  { $extra += '--prerelease' }
-          if ($env:PRISM_PRE -ne 'True') { $extra += '--latest' }
+  # One release per tag, containing every platform that succeeded. Collects
+  # the build jobs' artifacts, appends the source patch bundle and one
+  # checksums.txt, and publishes with the kit's release-notes template.
+  # Publishes nothing on the template itself (no_binaries keeps it binary-free).
+  publish:
+    needs: [decide, build]
+    if: ${{ needs.build.result == 'success' && vars.no_binaries != 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      BUILD_JSON: ${{ needs.decide.outputs.builds }}
+      GH_TOKEN: ${{ github.token }}
+      # This job runs in the kit checkout, not the upstream clone; the pin
+      # keeps every gh call inside this repository.
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out template
+        uses: actions/checkout@v4
 
-          gh release create $tag `
-            "out\PrismLauncher.exe" `
-            "out\source-patches-$tag.patch" `
-            "out\checksums.txt" `
-            --title "Prism Launcher $tag (offline-patched)" `
-            --notes-file $notes `
-            @extra
-          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+      - name: Download built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: false
 
-          # Prove the release really exists in this repository before going green.
-          gh release view $tag --json tagName,isDraft | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "Release $tag is not visible in this repository after create" }
-
-          Write-Host "Published release $tag"
+      - name: Publish releases
+        shell: pwsh
+        run: ./scripts/publish.ps1
 
   finalize:
-    needs: [decide, build]
+    needs: [decide, build, publish]
     if: always()
     runs-on: ubuntu-latest
     env:
       BUILD_JSON: ${{ needs.decide.outputs.builds }}
       BUILD_RESULT: ${{ needs.build.result }}
+      PUBLISH_RESULT: ${{ needs.publish.result }}
     steps:
       - uses: actions/checkout@v4
 
@@ -248,7 +264,13 @@ jobs:
         shell: bash
         run: |
           ADV=""
-          if [ "$BUILD_RESULT" = "success" ]; then ADV="--advance"; fi
+          if [ "$BUILD_RESULT" = "success" ]; then
+            # On the template itself the publish job is skipped (it must not
+            # host binaries); that still counts as a complete run there.
+            if [ "$PUBLISH_RESULT" = "success" ] || [ "$PUBLISH_RESULT" = "skipped" ]; then
+              ADV="--advance"
+            fi
+          fi
           pwsh ./scripts/update-state.ps1 -BuildsJson "$BUILD_JSON" $ADV
 
       - name: Commit state heartbeat

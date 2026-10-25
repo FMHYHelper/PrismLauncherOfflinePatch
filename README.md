@@ -13,10 +13,12 @@ modified.
 **This repository hosts no binaries.** It is the tool, not the distribution:
 no launcher code is stored here. Every build starts from a fresh clone of an
 upstream release tag, your patch files from `patches/` are applied on top of
-it, and the patched `PrismLauncher.exe` (drop-in for the official one) plus
-the exact source patch land in
-*your own copy's* Releases tab when you run it there. That makes the whole
-thing easy to read and easy to extend: a patch is one plain-text file.
+it, and the patched builds - the Windows exe (drop-in for the official one), a
+Windows portable zip, the Linux AppImage and portable tarball, and the macOS
+DMG, each packaged the way the official releases are - plus the exact source
+patch land in *your own copy's* Releases tab when you run it there. That makes
+the whole thing easy to read and easy to extend: a patch is one plain-text
+file.
 
 ---
 
@@ -68,31 +70,96 @@ compiling the launcher from real source code.
 **`PrismLauncher.exe`** (the only `.exe` there), open your existing Prism
 Launcher folder (for example `%AppData%\PrismLauncher` or wherever the portable
 copy lives), and paste it in, replacing the old one. **Keep a copy of the
-original exe first.**
+original exe first.** Not on Windows? Jump to *What gets built, and where*
+below - the Linux and macOS bundles are installed differently, and all of it
+is described there.
 
 After that you do nothing. When the launcher team publishes a new version, a
-fresh patched exe shows up in your Releases within a day.
+fresh patched build shows up in your Releases within a day - for every
+platform your copy builds.
 
-> The patched exe matches the **Windows-MSVC** flavour of the official release
-> of the same version. Other official flavours exist (Linux AppImage, MinGW,
-> macOS) - this template builds the flagship Windows one.
+## What gets built, and where
+
+Every upstream version produces one release in your copy containing, for the
+flagship flavour of each platform (the same one the official release leads
+with):
+
+| File | For | How to use it |
+|---|---|---|
+| `PrismLauncher.exe` | Windows | paste it over the official `prismlauncher.exe` (the two steps of *The easy way*) |
+| `PrismLauncher-Windows-MSVC-Portable-<tag>.zip` | Windows | a full launcher folder (exe + Qt runtime), unpack into a fresh folder and run |
+| `PrismLauncher-Linux-x86_64-<tag>.AppImage` | Linux, Steam Deck | make it executable (`chmod +x`) and run it |
+| `PrismLauncher-Linux-Qt6-Portable-<tag>.tar.gz` | Linux, Steam Deck | extract into a folder, run the launcher inside `bin/` |
+| `PrismLauncher-macOS-<tag>.dmg` | macOS | open it, drag the app to Applications |
+| `source-patches-<tag>.patch` + `checksums.txt` | all | the exact source diff applied, and the expected checksums of every file |
+
+Notes worth having in writing:
+
+- **Nothing is signed.** This kit holds no vendor signing credentials, so the
+  Windows builds are unsigned (SmartScreen may warn: *More info* then *Run
+  anyway*, after checking the checksum), the macOS build is ad-hoc signed
+  (Gatekeeper asks on first launch: right-click the app and choose *Open*),
+  and the Linux builds are unsigned. `checksums.txt` is the integrity check
+  to use instead.
+- **Steam Deck**: switch to desktop mode, download the AppImage, make it
+  executable, run it - and optionally use *Add to Steam* from its program
+  menu. This is not the Flathub build: upstream's official Flathub channel
+  continues to exist on its own and is untouched by this template.
+- **The in-app updater only knows official builds** (that is exactly what
+  the version-jump section below relies on). Updating a *patched* install
+  means replacing its files from your own Releases.
+- **Need fewer platforms?** macOS runners cost about 10x the minutes on
+  private repositories (Windows 2x, Linux 1x; all three are free on public
+  repositories). Set the repository **variable** `platforms` (same place as
+  `no_binaries`) to any of `windows`, `linux`, `macos` - comma or space
+  separated, or leave it unset for all three.
 
 ---
 
 ## When a new launcher version comes out
 
-Within the same version line (for example 11.1.0 > 11.1.1) the new exe pastes
-straight into your existing folder and works.
+Two different situations:
 
-Across a version jump (for example 11.x > 12.0) the Qt runtime files inside an
-old folder may be too old for the new exe. In that case do it once: download the
-official **PrismLauncher-Windows-MSVC-...-Portable.zip** of the new version,
-drop in your account data, then return to the paste-in-the-exe routine for later
-12.x releases.
+**Within the same version line** (11.1.0 to 11.1.1): the new
+`PrismLauncher.exe` from your copy's Releases pastes straight into your
+existing folder and works. Done.
 
-The launcher's built-in updater may at some point offer the official update.
-Accepting it replaces the exe with the official one - simply paste the patched
-exe from your own repository's Releases again afterwards.
+**Across a version jump** (for example 11.x to 12.0), the launcher's Qt
+runtime files grow a version along with the exe - and this template ships
+only exe-level releases for Windows, never Qt runtime files. The
+recommended order:
+
+1. **Let the official update go first.** Use the launcher's own *Check for
+   Updates*, accept its update prompt, or run the official installer over
+   the old install. That update rights everything that belongs together -
+   exe, Qt runtime files, plugins - because the thing that owns the folder
+   does the folder. Your accounts and instances are untouched, and a
+   `backup_<version>` folder with the old app files appears automatically
+   as a rollback. Until step 2 happens your launcher simply behaves like
+   the official one: the offline patch is the only thing on pause.
+2. **Paste the patched exe of the new version** once your copy has built it
+   (within a day of the upstream release, or sooner with a manual run),
+   exactly like the usual routine.
+
+If the built-in update lands before your copy has built the new version,
+nothing is broken: you are briefly on the official release, unpatched but
+fully working, and the paste waits for step 2. The updater's dialog also
+carries a **Skip** button if you would rather turn the offer down until the
+patched build exists.
+
+One thing the built-in updater cannot do is refresh a folder whose Qt
+runtime is too old *without* going through the official build. If you are
+offline when a version jump happens: download the
+`PrismLauncher-Windows-MSVC-Portable-<tag>.zip` of the new version from your
+copy's Releases - it is a complete patched folder (launcher plus fresh Qt
+runtime) - unpack it into a fresh folder, move your instances and
+`accounts.json` in, done. Later releases within the line go back to the
+ordinary paste-in routine.
+
+> If a freshly pasted exe refuses to start (it closes instantly, or an error
+> names a `Qt6*.dll`): the folder's Qt runtime is older than the exe. That
+> is the version-jump situation above, not a broken patch - the official
+> update (or the portable zip route) is what refreshes those files.
 
 ## If a run turns red
 
@@ -213,11 +280,13 @@ login feature.
    that pre-release is newer than the newest stable being handled (marked
    *Pre-release*), mirroring how upstream marks them.
 3. Each build clones the chosen tag, applies `patches/*.patch` in sorted
-   (numbered) order, and reads the tag's own `.github/workflows/build.yml` to
-   use the same Qt version, compiler setup and CMake preset the official
-   builds use.
-4. Assets per release: the patched exe, `source-patches-<tag>.patch` (the exact
-   source diff applied), and `checksums.txt`. Nothing else is shipped.
+   (numbered) order, and reads the tag's own CI configuration to build each
+   platform the way the official build of that tag does: same runner, Qt
+   version, compiler setup and CMake preset, per platform.
+4. Assets per release: one binary bundle per platform (the Windows exe plus
+   the Windows portable zip, the Linux AppImage plus portable tarball, the
+   macOS DMG), `source-patches-<tag>.patch` (the exact source diff applied),
+   and one `checksums.txt` covering every file. Nothing else is shipped.
 5. If nothing upstream changed and the patches are unchanged, the run only
    updates its state file and stops - no build, no release, no spam.
 

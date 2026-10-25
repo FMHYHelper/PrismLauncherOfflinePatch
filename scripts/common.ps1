@@ -106,15 +106,68 @@ function Get-UpstreamApiHeaders {
     return $h
 }
 
-function Get-UpstreamWindowsRecipe {
+function Resolve-KitPlatforms {
+    # Parses the platform selection for a run: the repositories variable
+    # `platforms` (exposed to the decision script as KIT_PLATFORMS, a comma or
+    # space separated subset of windows,linux,macos). Empty or 'all' means
+    # every platform. Unknown names are warned about and ignored; when nothing
+    # valid remains, all platforms are built - a typo in the variable must
+    # never silently stop a copy from building.
+    param([string]$Spec)
+
+    $all = @('windows', 'linux', 'macos')
+    if ([string]::IsNullOrWhiteSpace($Spec)) { return $all }
+    if ($Spec.Trim().ToLowerInvariant() -eq 'all') { return $all }
+
+    $requested = @($Spec -split '[,;\s]+' | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+    if ($requested.Count -eq 0) { return $all }
+
+    foreach ($x in ($requested | Where-Object { $all -notcontains $_ })) {
+        Write-Warning ("Unknown platform '" + $x + "' in the 'platforms' variable; ignoring it (known: " + ($all -join ', ') + ").")
+    }
+    $chosen = @($all | Where-Object { $requested -contains $_ })
+    if ($chosen.Count -eq 0) {
+        Write-Warning "No valid platform names in the 'platforms' variable; building all platforms."
+        return $all
+    }
+    return $chosen
+}
+
+function Get-UpstreamPlatformRecipe {
     # Read the tag's own CI configuration and return the recipe used for the
-    # official Windows-MSVC build: qt-version, vcvars-arch, cmake-preset.
-    # This keeps every kit build on the exact compiler and Qt line upstream
-    # used for that release.
+    # official build of one platform: runner os, artifact-name, Qt version,
+    # CMake preset and the platform-specific extras. This keeps every kit
+    # build on the exact compiler and Qt combination upstream used for that
+    # release, platform by platform.
     param(
         [Parameter(Mandatory = $true)][string]$Ref,
+        [Parameter(Mandatory = $true)][ValidateSet('windows', 'linux', 'macos')][string]$Platform,
         [AllowEmptyString()][string]$Token
     )
+
+    # The matrix entries this kit mirrors: the flagship flavour of each
+    # platform (a subset of upstream's own build matrix).
+    $specs = @{
+        windows = @{
+            artifact       = 'Windows-MSVC'
+            runner         = 'windows-2022'
+            presetFallback = 'windows_msvc'
+            qtFallback     = '6.10.2'
+        }
+        linux = @{
+            artifact       = 'Linux'
+            runner         = 'ubuntu-24.04'
+            presetFallback = 'linux'
+            qtFallback     = '6.10.2'
+        }
+        macos = @{
+            artifact       = 'macOS'
+            runner         = 'macos-26'
+            presetFallback = 'macos_universal'
+            qtFallback     = '6.9.3'
+        }
+    }
+    $spec = $specs[$Platform]
 
     $base = "https://raw.githubusercontent.com/PrismLauncher/PrismLauncher/$Ref"
     $headers = Get-UpstreamApiHeaders -Token $Token
@@ -122,11 +175,13 @@ function Get-UpstreamWindowsRecipe {
     $ci = Invoke-RestMethod -Uri "$base/.github/workflows/build.yml" -Headers $headers
     $raw = [string]$ci
 
-    # locate the Windows-MSVC matrix block: slice from its "- os:" line to the
-    # next "- os:" line, so neighbouring matrix entries can't bleed in
+    # locate the platform's matrix block: slice from its "- os:" line to the
+    # next "- os:" line, so neighbouring matrix entries can't bleed in. The
+    # negative lookahead keeps "Windows-MSVC" from matching "Windows-MSVC-arm64".
     $block = $null
     $osOpenings = [regex]::Matches($raw, '(?m)^\s*-\s+os:')
-    foreach ($am in [regex]::Matches($raw, 'artifact-name:\s*Windows-MSVC(?!-)')) {
+    $namePattern = 'artifact-name:\s*' + [regex]::Escape($spec.artifact) + '(?!-)'
+    foreach ($am in [regex]::Matches($raw, $namePattern)) {
         $openStart = $null
         $openEnd = $null
         foreach ($o in $osOpenings) {
@@ -137,51 +192,77 @@ function Get-UpstreamWindowsRecipe {
         if ($null -eq $openStart) { continue }
         if ($null -eq $openEnd) { $openEnd = $raw.Length }
         $slice = $raw.Substring($openStart, $openEnd - $openStart)
-        if ($slice -match 'windows-2022') {
+        if ($slice -match [regex]::Escape($spec.runner)) {
             $block = $slice
             break
         }
     }
     if ($null -eq $block) {
-        throw "Could not find a Windows-MSVC matrix entry in build.yml at $Ref"
+        throw "Could not find the $($spec.artifact) matrix entry in build.yml at $Ref"
     }
 
-    $qtVersion = '6.10.2'
+    $qtVersion = $spec.qtFallback
     $qm = [regex]::Match($block, 'qt-version:\s*([0-9]+\.[0-9]+\.[0-9]+)')
     if ($qm.Success) { $qtVersion = $qm.Groups[1].Value }
 
-    $vcvars = 'amd64'
-    $vm = [regex]::Match($block, 'vcvars-arch:\s*([a-z0-9_]+)')
-    if ($vm.Success) { $vcvars = $vm.Groups[1].Value }
-
-    $preset = $null
+    $preset = $spec.presetFallback
     $pm = [regex]::Match($block, 'cmake-preset:\s*([A-Za-z0-9_\-]+)')
     if ($pm.Success) { $preset = $pm.Groups[1].Value }
-    else {
-        $dm = [regex]::Match($raw, "CMAKE_PRESET:\s*\\\$\\{\\{\s*matrix\.cmake-preset\s*\|\| '([A-Za-z0-9_\-]+)'")
-        if ($dm.Success) { $preset = $dm.Groups[1].Value }
-        else { $preset = 'windows_msvc' }
-    }
 
     # validate against CMakePresets.json at this ref; fall back sensibly
     $presets = Invoke-RestMethod -Uri "$base/CMakePresets.json" -Headers $headers
     $names = @($presets.configurePresets | ForEach-Object { $_.name })
-    $chosen = @($preset, 'windows_msvc', 'ci') | Where-Object { $names -contains $_ } | Select-Object -First 1
+    $chosen = @($preset, $spec.presetFallback) | Where-Object { $names -contains $_ } | Select-Object -First 1
     if (-not $chosen) {
-        throw "No known Windows cmake preset exists in CMakePresets.json at $Ref (looked for $preset, windows_msvc, ci)"
+        throw "No known $Platform cmake preset exists in CMakePresets.json at $Ref (looked for $preset, $($spec.presetFallback))"
     }
 
-    # Qt < 6.6 did not ship an msvc2022 binary package
-    $qtArch = 'win64_msvc2019_64'
-    $parts = $qtVersion.Split('.')
-    if (([int]$parts[0] -gt 6) -or ([int]$parts[0] -eq 6 -and [int]$parts[1] -ge 6)) {
-        $qtArch = 'win64_msvc2022_64'
+    $vcvars = ''
+    $qtArch = ''
+    $macosxTarget = ''
+    if ($Platform -eq 'windows') {
+        $vcvars = 'amd64'
+        $vm = [regex]::Match($block, 'vcvars-arch:\s*([a-z0-9_]+)')
+        if ($vm.Success) { $vcvars = $vm.Groups[1].Value }
+
+        # Qt < 6.6 did not ship an msvc2022 binary package
+        $qtArch = 'win64_msvc2019_64'
+        $parts = $qtVersion.Split('.')
+        if (([int]$parts[0] -gt 6) -or ([int]$parts[0] -eq 6 -and [int]$parts[1] -ge 6)) {
+            $qtArch = 'win64_msvc2022_64'
+        }
+    }
+    if ($Platform -eq 'macos') {
+        $macosxTarget = '12.0'
+        $dm = [regex]::Match($block, 'macosx-deployment-target:\s*([0-9]+\.[0-9]+)')
+        if ($dm.Success) { $macosxTarget = $dm.Groups[1].Value }
     }
 
     return [pscustomobject]@{
-        qt_version = $qtVersion
-        qt_arch    = $qtArch
-        vcvars     = $vcvars
-        preset     = $chosen
+        platform      = $Platform
+        os            = $spec.runner
+        artifact_name = $spec.artifact
+        qt_version    = $qtVersion
+        qt_arch       = $qtArch
+        vcvars        = $vcvars
+        macosx_target = $macosxTarget
+        preset        = $chosen
+    }
+}
+
+function Get-UpstreamWindowsRecipe {
+    # Legacy-shaped helper: only the Windows-MSVC recipe (qt_version, qt_arch,
+    # vcvars, preset). Thin wrapper around Get-UpstreamPlatformRecipe.
+    param(
+        [Parameter(Mandatory = $true)][string]$Ref,
+        [AllowEmptyString()][string]$Token
+    )
+
+    $r = Get-UpstreamPlatformRecipe -Ref $Ref -Platform 'windows' -Token $Token
+    return [pscustomobject]@{
+        qt_version = $r.qt_version
+        qt_arch    = $r.qt_arch
+        vcvars     = $r.vcvars
+        preset     = $r.preset
     }
 }

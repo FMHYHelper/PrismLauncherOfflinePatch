@@ -54,8 +54,33 @@ in, and account-list behavior remains untouched. The account-picker and
 auto-fetch reliefs only apply when every account in the list is offline;
 empty lists are untouched.
 
-The exe is named `PrismLauncher.exe` - the same name the official build uses -
-so it is a drop-in replacement.
+Platform builds
+---------------
+
+Every platform the official release supports is built from the same tag,
+each with the compiler and Qt configuration the official build of that
+platform uses (read from the tag's own CI files). None of the builds carry
+a vendor code signature - this kit holds no signing credentials on any
+platform - so the integrity check to use is `checksums.txt` below.
+
+- **Windows exe** (`PrismLauncher.exe`): drop-in replacement for the
+  `prismlauncher.exe` inside an existing official install; see the steps
+  under *Install* below. Windows SmartScreen may warn about an unsigned
+  exe - "More info" and "Run anyway" after checking the checksum.
+- **Windows standalone folder**
+  (`PrismLauncher-Windows-MSVC-Portable-{{TAG}}.zip`): a complete launcher
+  folder (launcher plus its Qt runtime), packaged by the same packaging the
+  official release uses. Use this for a fresh start, or after a version
+  jump when an older folder carries too-old Qt runtime files.
+- **Linux** (`PrismLauncher-Linux-x86_64-{{TAG}}.AppImage`): one file -
+  make it executable and run. Works on ordinary distributions and on a
+  Steam Deck in desktop mode.
+- **Linux portable folder** (`PrismLauncher-Linux-Qt6-Portable-{{TAG}}.tar.gz`):
+  extract into a folder and run the launcher inside its `bin/` folder.
+- **macOS universal** (`PrismLauncher-macOS-{{TAG}}.dmg`): drag to
+  Applications. Ad-hoc signed on macOS 12 and newer; Gatekeeper asks on the
+  first launch - right-click the app and choose *Open*, after checking the
+  checksum.
 
 Install
 -------
@@ -74,8 +99,8 @@ Provenance
 - Patch set: exactly the text in the attached `source-patches-{{TAG}}.patch`
   (the publicly readable files under `patches/`, concatenated).
 - Sha256 of every file: `checksums.txt`.
-- Compiler and Qt version: the same recipe the official Windows-MSVC build
-  of that tag uses (read from the tag's own CI configuration).
+- Compiler and Qt versions: per platform, the same recipe the official
+  build of that tag uses (read from the tag's own CI configuration).
 
 License: GPL-3.0-only, same as upstream. Rebuild with upstream source +
 attached patch. Personal use - don't ship this as your own launcher.
