@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # The kit this copy follows. Hardcoded, not an input.
       TEMPLATE_SOURCE: FMHYHelper/PrismLauncherOfflinePatch
@@ -39,7 +39,7 @@ jobs:
       KIT_PUSH_TOKEN: ${{ secrets.KIT_PUSH_TOKEN || '' }}
     steps:
       - name: Check out this copy
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Take the template's update (no-op when already in step)
         shell: pwsh

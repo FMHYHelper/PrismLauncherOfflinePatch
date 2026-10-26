@@ -294,3 +294,34 @@ residual, and this was its live exercise.
   proven on the file-path rig; a real github.com token push can only be
   proven live (local rigs have no network), and the next copy to press
   the button on kit 13+ provides that proof for free.
+
+### Release-notes format, runner pins, cron shift (kit 15)
+
+Two maintenance facts this kit locked in, plus housekeeping:
+
+- **GitHub hard-wraps release bodies**: every single newline in a release
+  body renders as a line break. The release-notes template therefore keeps
+  one paragraph or one list item per line, however long the line gets -
+  never hand-wrap text in `docs/release-notes-template.md`. Kit 15 rewrote
+  the whole template for exactly this: the old text was wrapped at ~75
+  columns, so every paragraph rendered in the release as a stack of short
+  chopped lines. The same rewrite moved the macOS re-sign command into an
+  inline code span (indented under a list item, it had rendered as plain
+  text, not code), switched the headings to `##`, and retold the
+  invariance paragraph to match what the patches actually key off (the
+  selected account decides the launch; the picker and auto-fetch require
+  an all-offline list).
+- **Runner and action pins**: the helper jobs run on `ubuntu-24.04`
+  instead of `ubuntu-latest`, so the label's migration to a newer Ubuntu
+  release cannot change the toolchain under decide/publish/finalize; the
+  build matrix already pinned its runners explicitly. Actions bumped:
+  checkout v7.0.1, upload-artifact v7.0.2, download-artifact v8.0.2 -
+  upload and download always move together, they share the artifact
+  service contract. The v5-v8 majors' breaking changes do not reach this
+  kit's usage (name + path + if-no-files-found, pattern +
+  merge-multiple): Node 24 runtime (hosted runners qualify), digest
+  mismatches now failing the download (fail-loud is the wanted
+  direction), and opt-in direct upload/download parameters the kit does
+  not set. The daily cron moved from `0 6` to `23 6` to sit off the
+  top-of-hour scheduling spike. `ilammy/msvc-dev-cmd` stays at v1.13.0 -
+  newest, and Node 20 there is only a notice.

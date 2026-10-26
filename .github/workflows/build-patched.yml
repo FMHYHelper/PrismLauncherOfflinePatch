@@ -18,7 +18,7 @@ on:
         default: false
 
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "23 6 * * *"
 
 permissions:
   contents: write
@@ -37,7 +37,7 @@ jobs:
   # is behind the template skips the build entirely, loudly.
   kit-update-check:
     if: ${{ vars.no_binaries != 'true' && vars.kit_updates_off != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       issues: write
@@ -47,20 +47,20 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Check out the kit files
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Compare kit version against template
         shell: pwsh
         run: ./scripts/notify-kit-update.ps1
 
   decide:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       builds: ${{ steps.decide.outputs.builds }}
       has_builds: ${{ steps.decide.outputs.has_builds }}
     steps:
       - name: Check out template
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           path: kit
 
@@ -108,7 +108,7 @@ jobs:
       BUILD_PLATFORM: official
     steps:
       - name: Check out template
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
         with:
           path: kit
 
@@ -222,7 +222,7 @@ jobs:
           Get-ChildItem out -File | ForEach-Object { Write-Host "  $($_.Name)" }
 
       - name: Upload for publishing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           # The publish job groups these directories by tag; the name format
           # is parsed by scripts/publish.ps1 - keep tag and platform suffix.
@@ -237,7 +237,7 @@ jobs:
   publish:
     needs: [decide, build]
     if: ${{ needs.build.result == 'success' && vars.no_binaries != 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       BUILD_JSON: ${{ needs.decide.outputs.builds }}
       GH_TOKEN: ${{ github.token }}
@@ -246,10 +246,10 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Check out template
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Download built artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8.0.2
         with:
           pattern: release-*
           merge-multiple: false
@@ -261,13 +261,13 @@ jobs:
   finalize:
     needs: [decide, build, publish]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       BUILD_JSON: ${{ needs.decide.outputs.builds }}
       BUILD_RESULT: ${{ needs.build.result }}
       PUBLISH_RESULT: ${{ needs.publish.result }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Update state file
         shell: bash

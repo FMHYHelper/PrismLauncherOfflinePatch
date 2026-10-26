@@ -403,7 +403,7 @@ login feature.
 > template**, the same run publishes a release in *that* repository. The
 > switch is the repository variable `no_binaries` - see MAINTAINING.md.
 
-1. On every scheduled run (06:00 UTC daily) the workflow fetches upstream
+1. On every scheduled run (06:23 UTC daily) the workflow fetches upstream
    releases and compares them with `.state/last-build.json`.
 2. It releases the newest upstream **stable** tag it has not handled yet
    (marked *Latest*), and separately the newest **`-preN`** tag - but only if
