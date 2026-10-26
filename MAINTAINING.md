@@ -87,12 +87,18 @@ Since kit 6 a run builds every platform the official release leads with, in
 parallel, and pools them into one release per tag:
 
 - **Windows-MSVC** (`windows-2022`): the bare `PrismLauncher.exe`, a
-  drop-in for the official `prismlauncher.exe`, and nothing else. The
-  tag's own packaging action still builds the NSIS installer and the
-  portable zip as side effects; neither is attached since kit 9. The
-  zip's old job (fresh starts, offline version-jump fallback) is covered
-  by the documented official-first update order: the official update
-  owns and rights the Qt runtime files, and the exe paste follows it.
+  drop-in for the official `prismlauncher.exe`, and nothing else. Since
+  kit 11 the job skips the tag's Windows packaging action entirely: its
+  NSIS installer, portable zip and binary zip were never claimed by the
+  kit, and its pinned NSCurl download (a fixed GitHub release fetched on
+  every run) was a pure external flake point - it killed a real copy run
+  on 2026-10-25 with the compile itself already green. The shipped exe
+  is the build tree's own `prismlauncher.exe` - the same recursive
+  search every kit-6+ run has used - so nothing the kit claims changes.
+  The zip's old job (fresh starts, offline version-jump fallback)
+  remains covered by the documented official-first update order: the
+  official update owns and rights the Qt runtime files, and the exe
+  paste follows it.
 - **Linux x86_64** (`ubuntu-24.04`): the AppImage, nothing else - one
   self-contained file that replaces the official AppImage; the platform
   has no version-jump dance because the file carries its own Qt

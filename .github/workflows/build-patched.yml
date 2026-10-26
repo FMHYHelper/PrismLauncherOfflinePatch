@@ -168,21 +168,12 @@ jobs:
           build-type: Release
           artifact-name: ${{ matrix.artifact_name }}
 
-      - name: Package (Windows)
-        if: ${{ runner.os == 'Windows' }}
-        uses: ./.github/actions/package/windows
-        env:
-          # Without Azure Trusted Signing credentials the tag's own packaging
-          # action skips code signing with a warning; it never fails the run.
-          CI_HAS_ACCESS_TO_AZURE: ${{ vars.CI_HAS_ACCESS_TO_AZURE || '' }}
-        with:
-          version: ${{ matrix.tag }}
-          build-type: Release
-          artifact-name: ${{ matrix.artifact_name }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
+      # Windows runs no packaging step (kit 11): the tag's own Windows
+      # packaging only produced outputs this kit never claims (NSIS
+      # installer, portable zip, binary zip) and dragged in an external,
+      # pinned NSCurl download - the flake point that killed a real copy
+      # run on 2026-10-25. The exe the kit ships is the build tree's own
+      # prismlauncher.exe, staged below, exactly as every kit-6+ run did.
       - name: Stage release assets
         shell: pwsh
         run: |
@@ -190,9 +181,10 @@ jobs:
           $tag = $env:PRISM_TAG
           # Release shape (kit 9): one relevant file per platform, plus the
           # macOS pair (DMG + bare binary) - the drop-in story everywhere.
-          # Side-effect outputs of the tag's packaging action (Windows
-          # portable zip, Linux portable tarball, macOS binary zip) are
-          # deliberately not claimed; the docs explain the trade-offs.
+          # Since kit 11 Windows claims its exe straight from the build
+          # tree (no packaging action at all - see the note above); the
+          # remaining unclaimed side effects are the Linux portable
+          # tarball and the macOS binary zip.
           New-Item -ItemType Directory -Force -Path out | Out-Null
           if ($env:RUNNER_OS -eq 'Windows') {
             $exe = Get-ChildItem build -Recurse -File | Where-Object { $_.Name -ieq 'prismlauncher.exe' } | Select-Object -First 1
