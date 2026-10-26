@@ -181,21 +181,80 @@ if ($kitToken) {
 }
 
 $PSNativeCommandUseErrorActionPreference = $false
+
+$script:kitHeaderBackup = @()
+
+function Clear-KitCheckoutAuth {
+  # actions/checkout stores the automatic bot token as repo-local config
+  # http.<url>.extraheader. That header matches EVERY https://github.com URL -
+  # including the token-in-URL push URL - and its Authorization value wins over
+  # the URL's own credentials, so a KIT_PUSH_TOKEN push would go out wearing
+  # the bot's identity and be refused as a GitHub App (seen for real in a
+  # copy's red run; kit 13 removes the header for the push and puts it back).
+  # Capture and remove; Restore-KitCheckoutAuth re-adds them (the race-retry's
+  # pull --rebase needs the ordinary bot auth again). Values are never printed.
+  $script:kitHeaderBackup = @()
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $raw = @(& git config --local --get-regexp '^http\..*\.extraheader' 2>$null)
+    foreach ($line in $raw) {
+      $i = $line.IndexOf(' ')
+      if ($i -gt 0) {
+        $script:kitHeaderBackup += [pscustomobject]@{
+          key   = $line.Substring(0, $i)
+          value = $line.Substring($i + 1)
+        }
+      }
+    }
+    foreach ($e in $script:kitHeaderBackup) {
+      & git config --local --unset-all $e.key 2>$null | Out-Null
+    }
+  }
+  finally { $ErrorActionPreference = $prevEap }
+  if ($script:kitHeaderBackup.Count) {
+    Write-Host ("Removed {0} checkout credential header(s) for the token push (restored right after)." -f $script:kitHeaderBackup.Count)
+  }
+}
+
+function Restore-KitCheckoutAuth {
+  # Best-effort restore of the headers captured by Clear-KitCheckoutAuth.
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    foreach ($e in $script:kitHeaderBackup) {
+      & git config --local $e.key $e.value 2>$null | Out-Null
+    }
+  }
+  finally { $ErrorActionPreference = $prevEap }
+  $script:kitHeaderBackup = @()
+}
+
 function Invoke-KitPush {
   # One push attempt. The output is captured into $script:lastPush for the
   # refusal classification and every line is echoed, exactly as an
   # uncaptured push would print it. The capture runs under 'Continue'
   # explicitly: on Windows PowerShell 5.1, native stderr under 'Stop'
   # becomes a terminating NativeCommandError (a trap this kit's own gh
-  # probes hit before), and the push output is pure stderr.
+  # probes hit before), and the push output is pure stderr. On the token
+  # path the checkout's bot-token header is removed for the attempt and
+  # restored afterwards (see Clear-KitCheckoutAuth).
   param([string]$Branch)
   $target = if ($kitPushUrl) { $kitPushUrl } else { 'origin' }
+  if ($kitPushUrl) { Clear-KitCheckoutAuth }
   $prevEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  $script:lastPush = @(& git push $target "HEAD:$Branch" 2>&1 | ForEach-Object { "$_" })
-  $ErrorActionPreference = $prevEap
+  $exit = 1
+  try {
+    $script:lastPush = @(& git push $target "HEAD:$Branch" 2>&1 | ForEach-Object { "$_" })
+    $exit = $LASTEXITCODE
+  }
+  finally {
+    $ErrorActionPreference = $prevEap
+    if ($kitPushUrl) { Restore-KitCheckoutAuth }
+  }
   foreach ($line in $script:lastPush) { Write-Host $line }
-  return $LASTEXITCODE
+  return $exit
 }
 
 function Test-PushWasWorkflowRefusal {
@@ -229,11 +288,25 @@ terminal route that never needs a token (the token is only for this
 button).
 "@
 
+$kitWorkflowRefusalTokenUsedHelp = @"
+The push was refused as a GitHub App even though KIT_PUSH_TOKEN was in
+use - it went out wearing the bot's identity. On kits before 13 the
+checkout's stored bot-token header overrides the personal token in the
+push URL (kit 13 removes that header for the push). The one-time way out
+that ignores the button entirely: the terminal route in the 'Template
+update available' issue (four git commands in any clone or codespace).
+Once that sync lands, the button works with the token you already have.
+If this copy is already at kit 13 or newer, check the token itself: it
+must be a fine-grained personal access token with Contents = Read and
+write and Workflows = Read and write on THIS repository.
+"@
+
 $pushExit = Invoke-KitPush -Branch $branch
 if ($pushExit -ne 0) {
   if (Test-PushWasWorkflowRefusal) {
     # A permanent refusal - retrying can never help. Say so, loudly, once.
-    throw $kitWorkflowRefusalHelp
+    $refusalHelp = if ($kitPushUrl) { $kitWorkflowRefusalTokenUsedHelp } else { $kitWorkflowRefusalHelp }
+    throw $refusalHelp
   }
   if ($kitPushUrl -and (($script:lastPush -join "`n") -imatch 'authentication failed')) {
     throw "The KIT_PUSH_TOKEN credential was refused by GitHub (the push failed to authenticate): the token is expired or lacks Contents+Workflows write on this repository. Create a fresh fine-grained token and replace the KIT_PUSH_TOKEN secret, then run this workflow again."
@@ -243,7 +316,10 @@ if ($pushExit -ne 0) {
   if ($LASTEXITCODE -ne 0) { throw "Could not rebase onto $branch (a concurrent run may still be pushing); rerun this workflow in a minute" }
   $pushExit = Invoke-KitPush -Branch $branch
   if ($pushExit -ne 0) {
-    if (Test-PushWasWorkflowRefusal) { throw $kitWorkflowRefusalHelp }
+    if (Test-PushWasWorkflowRefusal) {
+      $refusalHelp = if ($kitPushUrl) { $kitWorkflowRefusalTokenUsedHelp } else { $kitWorkflowRefusalHelp }
+      throw $refusalHelp
+    }
     throw "Push to $branch failed after the retry; rerun this workflow in a minute"
   }
 }
