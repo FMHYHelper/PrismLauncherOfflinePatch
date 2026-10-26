@@ -27,6 +27,9 @@ mechanisms in the workflow enforce that:
   the stricter rule that a tag only counts as handled if a release for it
   exists in that repository - this covers copies that inherit the template's
   `.state/last-build.json` with no release history of their own.
+- The build matrix itself still runs here: it proves the patches keep
+  applying to real upstream tags, and then nothing is published. The
+  finalize job treats a skipped publish as normal for exactly this reason.
 
 ## Editing the template
 
@@ -228,39 +231,6 @@ run fails loud with the setup steps.
   10 with the logic already in their hands, and their nudge issue leads
   them through the one-time token setup.
 
-### The checkout header override and its fix (kit 13)
-
-The kit-10 token path met a real override in the wild: the copy's button
-run had the secret set, printed "Pushing with the KIT_PUSH_TOKEN
-credential", rewrote the push URL correctly - and GitHub still refused
-the push *as a GitHub App*. The decisive clue was the refusal wording: a
-fine-grained PAT refusal says "a fine-grained personal access token";
-"GitHub App" means the automatic bot token did the talking. The
-mechanism: `actions/checkout` stores the bot token as repo-local config
-`http.https://github.com/.extraheader`, and that URL pattern matches
-*every* github.com URL - including the rewritten
-`https://x-access-token:...@github.com/...` push URL - with its
-Authorization header winning over the URL's own credentials. The kit-10
-rig never saw it because its origin is a file path, where the header
-does not exist; the github.com push had been flagged as the untested
-residual, and this was its live exercise.
-
-- Kit 13: `Invoke-KitPush` captures and removes every
-  `http.*.extraheader` repo-local entry before a token-path push and
-  restores them right after (so the race-retry's `pull --rebase` still
-  authenticates as the bot). Values are captured in memory only and are
-  never printed; the runner masks them regardless.
-- The refusal help is now credential-aware: a GitHub-App refusal with no
-  token in use still teaches the PAT setup; with the token in use it
-  names the override (kit predates 13) and points at the terminal route
-  for the one-time hop. The nudge issue's diagnosis sentence says the
-  same. README made no flat "refusal = missing secret" claim and needed
-  no change.
-- Rig limits: the header mechanics are unit-proven (capture/unset/
-  restore against a scratch repo) and the full sync flow is regression-
-  proven on the file-path rig; a real github.com token push remains a
-  live-exercise item by construction (local rigs have no network).
-
 ### The stale-kit build gate (kit 12)
 
 A copy behind the template no longer builds at all. `decide.ps1` compares
@@ -291,9 +261,36 @@ removed. Building from an old kit is never worth runner time.
   involved: everything downstream rides the existing has_builds=false
   path that "nothing new upstream" runs have always taken.
 
-## Why the template itself publishes nothing (kit 6 shape)
+### The checkout header override and its fix (kit 13)
 
-The `publish` job is gated on `vars.no_binaries != 'true'`, same as the old
-in-build publish step was. On this template the build matrix still runs - it
-proves the patches keep applying to real upstream tags - and then nothing is
-published; the finalize job treats a skipped publish as normal there.
+The kit-10 token path met a real override in the wild: the copy's button
+run had the secret set, printed "Pushing with the KIT_PUSH_TOKEN
+credential", rewrote the push URL correctly - and GitHub still refused
+the push *as a GitHub App*. The decisive clue was the refusal wording: a
+fine-grained PAT refusal says "a fine-grained personal access token";
+"GitHub App" means the automatic bot token did the talking. The
+mechanism: `actions/checkout` stores the bot token as repo-local config
+`http.https://github.com/.extraheader`, and that URL pattern matches
+*every* github.com URL - including the rewritten
+`https://x-access-token:...@github.com/...` push URL - with its
+Authorization header winning over the URL's own credentials. The kit-10
+rig never saw it because its origin is a file path, where the header
+does not exist; the github.com push had been flagged as the untested
+residual, and this was its live exercise.
+
+- Kit 13: `Invoke-KitPush` captures and removes every
+  `http.*.extraheader` repo-local entry before a token-path push and
+  restores them right after (so the race-retry's `pull --rebase` still
+  authenticates as the bot). Values are captured in memory only and are
+  never printed; the runner masks them regardless.
+- The refusal help is now credential-aware: a GitHub-App refusal with no
+  token in use still teaches the PAT setup; with the token in use it
+  names the override (kit predates 13) and points at the terminal route
+  for the one-time hop. The nudge issue's diagnosis sentence says the
+  same. README made no flat "refusal = missing secret" claim and needed
+  no change.
+- Rig limits: the header mechanics are unit-proven (capture/unset/
+  restore against a scratch repo) and the full sync flow is regression-
+  proven on the file-path rig; a real github.com token push can only be
+  proven live (local rigs have no network), and the next copy to press
+  the button on kit 13+ provides that proof for free.
