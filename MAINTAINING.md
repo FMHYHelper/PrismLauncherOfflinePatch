@@ -228,6 +228,36 @@ run fails loud with the setup steps.
   10 with the logic already in their hands, and their nudge issue leads
   them through the one-time token setup.
 
+### The stale-kit build gate (kit 12)
+
+A copy behind the template no longer builds at all. `decide.ps1` compares
+the copy's `KIT-VERSION` against the template's (one unauthenticated
+`raw.githubusercontent.com` fetch) and, when the copy is behind, emits
+`has_builds=false` - so the build matrix and publish skip through the
+existing gates, `finalize` still runs and advances nothing, and the run
+stays green. The rule came from a real run: a stale copy's manual rebuild
+burned a 30-minute Windows job dying in a flake zone kit 11 had already
+removed. Building from an old kit is never worth runner time.
+
+- The skip is loud by design: a `BUILDS SKIPPED` banner in the decide
+  log, a `::warning::` annotation, a run-summary line, and the nudge
+  issue (which also says builds are paused while behind). The run page
+  answers "why did nothing build" without opening any log.
+- Fail-open by contract: only a positive, parsed comparison (both
+  versions integers, local < remote) skips the run. Network trouble,
+  a missing file or an unparseable version builds as before, with a
+  warning line. `KIT_UPDATES_OFF` silences the notice but not the gate.
+- Bypasses: the template itself never gates (`GITHUB_REPOSITORY` equal
+  to `TEMPLATE_SOURCE` - it defines "current"); local batteries with
+  `KIT_TEST_RELEASES_FILE` bypass it; the gate itself is testable offline
+  via `KIT_TEST_TEMPLATE_KIT_VERSION`; and the repository variable
+  `build_if_old` = `true` is the documented emergency hatch (e.g. while
+  a broken kit sits at the template's tip and a copy needs builds now).
+- Gating lives in `decide` (one runner-minute job) rather than as a
+  `needs:` edge on the build job, so no job-skip cascade semantics are
+  involved: everything downstream rides the existing has_builds=false
+  path that "nothing new upstream" runs have always taken.
+
 ## Why the template itself publishes nothing (kit 6 shape)
 
 The `publish` job is gated on `vars.no_binaries != 'true'`, same as the old

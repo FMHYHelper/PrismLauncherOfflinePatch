@@ -276,6 +276,14 @@ this repository describing the update. Later runs neither duplicate nor
 spam it: the same open issue just gets a dated status comment, and it
 closes itself once the versions match again.
 
+**Out of date means paused, not broken (kit 12).** While this copy is
+behind the template, its own build workflow skips the build entirely -
+on purpose, so no run ever publishes a release built from an old kit.
+The skip is loud on purpose too: the run's log carries a **"BUILDS
+SKIPPED"** banner, a warning annotation and a line in the run summary,
+the update issue says the same, and the run itself stays green. Nothing
+needs deleting or reverting; syncing turns the builds back on.
+
 **Taking the update - the one-click way.** Open the **Actions** tab, click
 **"Sync kit files from template"** in the left list, press **"Run
 workflow"**, confirm. The build's own automation account replaces the kit
@@ -319,7 +327,10 @@ The details, condensed:
   `KIT_UPDATES_OFF` to `true` (Settings > Secrets and variables > Actions >
   Variables) and the check disappears from every future run. Closing the
   issue without syncing is not an opt-out - the next run simply files a
-  fresh one; the variable is the real off switch.
+  fresh one; the variable is the real off switch. Note that it silences
+  the *notice* only: the pause on out-of-date builds still applies. The
+  one documented bypass is the repository variable `build_if_old` = `true`
+  (an emergency hatch for "I need a build even while behind").
 
 The update replaces the template's copies of the whole kit -
 `.github/workflows/`, `patches/`, `scripts/`, `docs/`, `README.md`,

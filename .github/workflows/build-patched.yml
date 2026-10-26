@@ -32,8 +32,9 @@ jobs:
   # and keeps one "Template update available" issue in step. Runs FIRST, in
   # parallel with everything else, so an out-of-date copy is told within a
   # minute of starting a run instead of after the compiler finishes. It
-  # doesn't gate or delay the build and never turns a run red (the script is
-  # fail-soft on purpose).
+  # never turns a run red (the script is fail-soft on purpose). The build
+  # side of the same rule lives in the decide job (kit 12): a copy whose kit
+  # is behind the template skips the build entirely, loudly.
   kit-update-check:
     if: ${{ vars.no_binaries != 'true' && vars.kit_updates_off != 'true' }}
     runs-on: ubuntu-latest
@@ -77,6 +78,12 @@ jobs:
           # 'all' for every platform. Lets cost-sensitive copies (e.g. private
           # repositories running macOS runners) slim the matrix down.
           KIT_PLATFORMS: ${{ vars.platforms || '' }}
+          # Kit-age gate (kit 12): decide.ps1 compares this copy's KIT-VERSION
+          # against the template's and refuses to build while the copy is
+          # behind (fail-open; loud banner in the log and run summary). The
+          # repository variable `build_if_old` set to true bypasses the gate.
+          TEMPLATE_SOURCE: FMHYHelper/PrismLauncherOfflinePatch
+          KIT_BUILD_IF_OLD: ${{ vars.build_if_old || '' }}
           INPUT_REF: ${{ inputs.upstream_ref }}
           INPUT_QT: ${{ inputs.qt_version }}
           INPUT_FORCE: ${{ inputs.force_rebuild }}

@@ -13,6 +13,14 @@
 #   - KIT_PLATFORMS (the repositories variable `platforms`) filters the
 #     platform list: comma or space separated subset of windows,linux,macos;
 #     empty or 'all' means all of them.
+#   - Kit-age gate (kit 12): when this copy's KIT-VERSION is behind the
+#     template's, nothing is built at all - has_builds=false, plus a loud
+#     "BUILDS SKIPPED" banner in the log, a warning annotation and a run
+#     summary line. An old kit must never build or publish. Fail-open by
+#     contract: only a positive, parsed comparison (both versions integers,
+#     local < remote) skips a run; network trouble or parse trouble builds
+#     as before. The template itself never gates (it defines "current"),
+#     and the repository variable build_if_old=true is the emergency bypass.
 #
 # Per-platform recipes come from the upstream tag's own CI configuration.
 # Strictness when a recipe cannot be read:
@@ -38,6 +46,101 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Find-RepoRoot
 $statePath = Join-Path $repoRoot '.state\last-build.json'
+
+# ------------------------------------------------------ kit freshness ----
+# Kit 12: a copy whose kit is behind the template must not build at all -
+# building (and publishing) from an old kit wasted whole runs and could
+# publish releases with outdated kit logic. Fail-open on purpose: only a
+# positive, parsed comparison skips the run; a failed template fetch or an
+# unparseable KIT-VERSION builds as before (the nudge issue keeps nagging
+# either way). Test hooks, mirroring KIT_TEST_RELEASES_FILE:
+#   KIT_TEST_TEMPLATE_KIT_VERSION - stand-in for the template's version;
+#   keeps the gate ON offline (while KIT_TEST_RELEASES_FILE alone - the
+#   older batteries - bypasses the gate)
+#   KIT_BUILD_IF_OLD - from the repository variable build_if_old; the
+#   documented emergency bypass.
+function Test-KitBehind {
+    # Returns 'skip' when this copy is positively known to be behind the
+    # template, 'ok' when it is in step or ahead, 'unknown' when no fair
+    # comparison was possible. Prints the loud block for the 'skip' case.
+    param([string]$LocalFile, [string]$RemoteVersion)
+
+    $localKit = ''
+    if (Test-Path $LocalFile) { $localKit = ([string](Get-Content $LocalFile -Raw)).Trim() }
+    $localNum = 0
+    $remoteNum = 0
+    $localOk = [int]::TryParse($localKit, [ref]$localNum)
+    $remoteOk = [int]::TryParse("$RemoteVersion", [ref]$remoteNum)
+
+    if (-not ($localOk -and $remoteOk)) {
+        Write-Host ("Kit freshness check could not compare versions (this copy '{0}', template '{1}'); building as usual." -f $localKit, $RemoteVersion)
+        return 'unknown'
+    }
+    if ($localNum -ge $remoteNum) {
+        Write-Host ("Kit freshness check: this copy {0} / template {1} - in step or ahead, building." -f $localNum, $remoteNum)
+        return 'ok'
+    }
+
+    Write-Host "================================================================="
+    Write-Host "  BUILDS SKIPPED: THIS COPY'S KIT IS OUT OF DATE"
+    Write-Host ""
+    Write-Host ("  This copy is at kit {0}; the template is at kit {1}." -f $localNum, $remoteNum)
+    Write-Host "  The build was skipped on purpose - an old kit must never"
+    Write-Host "  build or publish. Nothing is broken. Fix it in two steps:"
+    Write-Host ""
+    Write-Host "    1. Actions tab -> 'Sync kit files from template' -> Run workflow"
+    Write-Host "       (needs the one-time KIT_PUSH_TOKEN secret; the issue titled"
+    Write-Host "       'Template update available' has the full setup steps and a"
+    Write-Host "       terminal route that needs no token)"
+    Write-Host "    2. Actions tab -> 'Build patched Prism Launcher' -> Run workflow"
+    Write-Host ""
+    Write-Host "================================================================="
+    Write-Host ("::warning::Builds skipped: kit out of date (this copy kit {0}, template kit {1}). Sync the kit, then run again." -f $localNum, $remoteNum)
+    if ($env:GITHUB_STEP_SUMMARY) {
+        try {
+            Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ("## Builds skipped: kit out of date`n`nThis copy is at kit **{0}**; the template is at kit **{1}**. Sync first (Actions > 'Sync kit files from template'), then run 'Build patched Prism Launcher' again." -f $localNum, $remoteNum)
+        } catch { }
+    }
+    return 'skip'
+}
+
+$kitOldSkip = $false
+if ($env:KIT_BUILD_IF_OLD -eq 'true') {
+    Write-Host "Repository variable build_if_old is set; the kit-age gate is bypassed for this run."
+}
+elseif ($env:GITHUB_REPOSITORY -and $env:TEMPLATE_SOURCE -and ($env:GITHUB_REPOSITORY -eq $env:TEMPLATE_SOURCE)) {
+    Write-Host "This repository is the template itself; the kit-age gate does not apply."
+}
+elseif ($env:KIT_TEST_TEMPLATE_KIT_VERSION) {
+    Write-Host "Test mode (KIT_TEST_TEMPLATE_KIT_VERSION); the gate compares against '$($env:KIT_TEST_TEMPLATE_KIT_VERSION)' without fetching."
+    $kitOldSkip = Test-KitBehind -LocalFile (Join-Path $repoRoot 'KIT-VERSION') -RemoteVersion $env:KIT_TEST_TEMPLATE_KIT_VERSION
+}
+elseif ($env:KIT_TEST_RELEASES_FILE) {
+    Write-Host "Test mode (KIT_TEST_RELEASES_FILE); the kit-age gate is bypassed."
+}
+else {
+    $templateRepo = if ($env:TEMPLATE_SOURCE) { $env:TEMPLATE_SOURCE } else { 'FMHYHelper/PrismLauncherOfflinePatch' }
+    $remoteKit = ''
+    try {
+        $remoteKit = ([string](Invoke-RestMethod "https://raw.githubusercontent.com/$templateRepo/main/KIT-VERSION")).Trim()
+    }
+    catch {
+        Write-Host "::warning::Could not read the template's KIT-VERSION ($($_.Exception.Message)); the kit-age gate cannot run, so this run builds as usual."
+    }
+    $kitOldSkip = Test-KitBehind -LocalFile (Join-Path $repoRoot 'KIT-VERSION') -RemoteVersion $remoteKit
+}
+
+if ($kitOldSkip -eq 'skip') {
+    # Same output shape as the normal tail: empty matrix, no builds.
+    $js = @{ include = @() } | ConvertTo-Json -Compress -Depth 5
+    if ($OutputFile) {
+        Add-Content -Path $OutputFile -Value "builds=$js"
+        Add-Content -Path $OutputFile -Value "has_builds=false"
+    }
+    Write-Output "builds=$js"
+    Write-Output "has_builds=false"
+    exit 0
+}
 
 # ---------------------------------------------------------------- state ----
 $state = [pscustomobject]@{

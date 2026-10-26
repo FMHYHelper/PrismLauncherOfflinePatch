@@ -89,7 +89,7 @@ try {
       $bodyTemplate = @'
 This copy of the offline-patch kit is **{LOCAL_VERSION}** while the template is now at **{REMOTE_VERSION}**. The template picked up changes (new or updated `patches/`, workflow, scripts, docs) that this copy does not have yet.
 
-Nothing has stopped working: this copy keeps building with the files it already has. But new upstream support, fixes and doc improvements only arrive after you take the template's updates.
+While you are behind, this copy **pauses its own builds**: the build workflow refuses to run an old kit, so no release can ever be published from outdated kit files. Nothing is broken and nothing needs deleting - syncing turns the builds back on, and new upstream support, fixes and doc improvements only arrive after you take the template's updates.
 
 ## Taking the update
 
@@ -171,6 +171,14 @@ Set the repository **variable** (not a secret) `KIT_UPDATES_OFF` to `true`
 stops running entirely from the next run on. Closing this issue without
 syncing does not prevent a fresh one from being filed on a later run; the
 variable is the real opt-out.
+
+Two notes on what this opt-out does and does not do: it silences the
+*notice* only. The build workflow still refuses to run while the kit is
+behind the template - that pause is the point of kit 12 and is not part
+of this variable. The one documented bypass is the repository variable
+`build_if_old` set to `true`, which makes builds run even while behind
+(an emergency hatch, e.g. while a broken kit sits at the template's tip
+and you need a build regardless).
 '@
       $body = $bodyTemplate.Replace('{REMOTE_VERSION}', $remoteVersion).Replace('{LOCAL_VERSION}', $localVersion).Replace('{TEMPLATE_URL}', $template)
       $body | gh issue create --title $issueTitle --body-file -
