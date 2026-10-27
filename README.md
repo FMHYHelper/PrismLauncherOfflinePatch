@@ -67,8 +67,9 @@ compiling the launcher from real source code.
 
 **Step 5.** Open the **Releases** page **of your own new repository**. Download
 **`PrismLauncher.exe`** (the only `.exe` there), open your existing Prism
-Launcher folder (for example `%AppData%\PrismLauncher` or wherever your
-portable copy lives), keep a copy of the original exe, and paste the
+Launcher folder (the official installer's default location is
+`%LocalAppData%\Programs\PrismLauncher`; for a portable copy it is
+wherever you unzipped it), keep a copy of the original exe, and paste the
 download in, replacing the old `prismlauncher.exe` - keeping that exact
 name, which the folder's shortcuts and the updater's backup logic point
 to. Taking it on macOS, Linux or a Steam Deck? Skip down to *Installing
@@ -126,8 +127,9 @@ top of it. And check every download against `checksums.txt` once.
    (official installer or official portable zip - either), and quit the
    launcher if it is running.
 2. Download `PrismLauncher.exe` from your copy's Releases.
-3. Open your existing Prism Launcher folder (for example
-   `%AppData%\PrismLauncher`, or the folder of your portable copy). Keep
+3. Open your existing Prism Launcher folder - the official installer's
+   default location is `%LocalAppData%\Programs\PrismLauncher`; for a
+   portable copy it is wherever you unzipped it. Keep
    a copy of the original `prismlauncher.exe` (rename it to
    `prismlauncher.exe.orig`), then place the downloaded file there named
    exactly `prismlauncher.exe` - that name is what the folder's shortcuts
