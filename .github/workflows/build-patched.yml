@@ -201,7 +201,10 @@ jobs:
           elseif ($env:RUNNER_OS -eq 'Linux') {
             $appimage = Get-ChildItem -File | Where-Object { $_.Name -like "PrismLauncher-Linux-*x86_64.AppImage" } | Select-Object -First 1
             if ($null -eq $appimage) { throw "AppImage not found in workspace" }
-            Move-Item $appimage.FullName "out/PrismLauncher-Linux-x86_64-$tag.AppImage"
+            # Kit 17: stage under the official unversioned name, so the
+            # user's swap needs no rename and existing menu or Steam
+            # shortcuts keep pointing at the launcher.
+            Move-Item $appimage.FullName "out/PrismLauncher-Linux-x86_64.AppImage"
           }
           else {
             $dmg = Get-ChildItem -File -Filter "PrismLauncher.dmg" | Select-Object -First 1

@@ -88,7 +88,7 @@ with):
 | File | For | How to use it |
 |---|---|---|
 | `PrismLauncher.exe` | Windows | drop-in for the official `prismlauncher.exe` (tutorial below: Windows) |
-| `PrismLauncher-Linux-x86_64-<tag>.AppImage` | Linux, Steam Deck | one self-contained file, replaces the official AppImage (tutorial below: Linux) |
+| `PrismLauncher-Linux-x86_64.AppImage` | Linux, Steam Deck | one self-contained file, named exactly like the official one - replaces it in place (tutorial below: Linux) |
 | `PrismLauncher-macOS-<tag>.dmg` | macOS | a complete app, drag to Applications (tutorial below: macOS route 1) |
 | `prismlauncher-macos` | macOS | the bare patched binary, swapped into an official app (tutorial below: macOS route 2) |
 | `source-patches-<tag>.patch` + `checksums.txt` | all | the exact source diff applied, and the expected checksums of every file |
@@ -146,12 +146,15 @@ repeats it identically.
    it (upstream's release page, `chmod +x`, first run), and quit the
    launcher if it is running. Instances and settings live under
    `~/.local/share/PrismLauncher` and nothing in this swap touches them.
-2. Download `PrismLauncher-Linux-x86_64-<tag>.AppImage` from your copy's
-   Releases.
-3. Replace the official AppImage file with the patched one - same name
-   if you want it invisible, a fresh name if you would rather keep both
-   side by side. If the browser stripped the executable bit, set it
-   again: `chmod +x <the file you placed>`.
+2. Download `PrismLauncher-Linux-x86_64.AppImage` from your copy's
+   Releases. It is named exactly like the official one, so nothing needs
+   renaming on your side.
+3. Keep a copy of the original - rename the official file to
+   `PrismLauncher-Linux-x86_64.AppImage.bak` (or move it elsewhere) -
+   then put the patched file where the official one was. Keeping the
+   official name is what keeps your menu entry or Steam shortcut working
+   with no extra steps. If the browser stripped the executable bit, set
+   it again: `chmod +x <the file you placed>`.
 4. Run it. This swap is the entire update procedure on Linux: the
    AppImage carries its own Qt runtime, so a version jump is the same
    one-file swap with no extra steps - there is no Qt dance on Linux at
