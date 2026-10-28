@@ -275,6 +275,16 @@ jobs:
       - name: Update state file
         shell: bash
         run: |
+          # Kit-20: write the heartbeat on the branch's live tip, not on the
+          # commit this run was dispatched with. A run dispatched while the
+          # previous run was still finalizing freezes one heartbeat behind,
+          # and its own finalize would then have to replay a conflicting
+          # write to .state/last-build.json over that heartbeat (run #25,
+          # 2026-10-28). The tree is clean here, so this is a pure
+          # fast-forward and cannot conflict. It also means the state
+          # update reads the tip's state, not a stale checkout's.
+          git fetch origin "${GITHUB_REF_NAME}"
+          git merge --ff-only "origin/${GITHUB_REF_NAME}"
           ADV=""
           if [ "$BUILD_RESULT" = "success" ]; then
             # On the template itself the publish job is skipped (it must not
@@ -296,5 +306,15 @@ jobs:
             exit 0
           fi
           git commit -m "state: automatic upstream heartbeat"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin HEAD
+          # Kit-20: one retry if another push (a heartbeat from a run that
+          # finalized while this one built, or a kit sync) lands in the
+          # seconds between the fetch above and this push. During a rebase
+          # replay "theirs" is the commit being replayed - this run's
+          # heartbeat, the fresher state file - so a same-file conflict
+          # resolves in its favor. A second failure stays loud: it can only
+          # mean real divergence, which must be looked at.
+          if ! git push origin HEAD; then
+            git fetch origin "${GITHUB_REF_NAME}"
+            git rebase -X theirs "origin/${GITHUB_REF_NAME}"
+            git push origin HEAD
+          fi

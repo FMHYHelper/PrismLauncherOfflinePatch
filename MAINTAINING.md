@@ -382,3 +382,36 @@ throw-string help in sync-kit) are deliberately untouched: run logs
 print text literally, so their wrapping renders as intended. The body
 is also what the kit's own one-paste hop advice quotes, so a fresh
 issue doubles as the copy-paste source it always was.
+
+### The finalize heartbeat raced a dispatch (kit 20)
+
+Two heartbeats can conflict even though runs never overlap: the
+concurrency group serializes runs, but a run's checkout is frozen at the
+commit it was DISPATCHED with. Run #25 (2026-10-28) was dispatched at
+18:42:17, while cancelled run #24's finalize was still landing its
+heartbeat (18:42:51). Twenty-five minutes later #25's finalize had to
+rebase its own heartbeat over that one; both commits rewrite the same
+`.state/last-build.json`, the rebase cannot auto-merge, and the step dies
+with "error: could not apply ... state: automatic upstream heartbeat".
+Publish had already been skipped (a cancelled matrix job keeps the build
+job's result off success), so that run also cut no release - two visible
+failures from one 34-second dispatch race. Kit 20 closes the window:
+
+- "Update state file" first brings the branch to the live tip
+  (`git fetch` + `git merge --ff-only` - a clean tree makes this a pure
+  fast-forward, which cannot conflict), so the heartbeat is written on
+  whatever main actually is instead of the frozen dispatch sha, and the
+  state update reads the tip's state file rather than a stale one.
+- "Commit state heartbeat" retries one rejected push: fetch, replay the
+  heartbeat with `git rebase -X theirs`, push again. During a rebase
+  replay "theirs" is the commit being replayed - this run's fresher
+  heartbeat - so a same-file conflict resolves in its favor. A second
+  failure stays loud; it can only mean real divergence.
+- Rig-proven before shipping on file-path origins (shallow clones
+  included): a clone one heartbeat behind fast-forwards cleanly over a
+  landed foreign heartbeat (the #25 shape), and a push rejected by a
+  second heartbeat landing mid-step recovers through the retry with this
+  run's state file winning.
+- The operational rule stands: do not dispatch a run while another is
+  still finishing. Kit 20 survives the overlap; the queue time is still
+  wasted.
