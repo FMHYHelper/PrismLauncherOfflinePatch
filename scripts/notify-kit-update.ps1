@@ -95,45 +95,13 @@ While you are behind, this copy **pauses its own builds**: the build workflow re
 
 ### One-click way (needs a one-time personal token)
 
-GitHub, by its own security rule, refuses pushes that change workflow
-files when they come from the repository's automatic bot token - and
-every kit sync carries workflow files. GitHub does not even let that
-token be granted the "workflows" permission, and this kit cannot switch
-the rule off. So the button runs on a personal token added once, and
-every future sync stays one-click from then on:
+GitHub, by its own security rule, refuses pushes that change workflow files when they come from the repository's automatic bot token - and every kit sync carries workflow files. GitHub does not even let that token be granted the "workflows" permission, and this kit cannot switch the rule off. So the button runs on a personal token added once, and every future sync stays one-click from then on:
 
-1. Make a **fine-grained personal access token**: GitHub, top-right
-   avatar -> Settings -> Developer settings -> Fine-grained tokens ->
-   Generate new token. Scope it to **only this repository**, and give
-   the repository permissions **Contents: Read and write** plus
-   **Workflows: Read and write**. Expiry as you like - replacing an
-   expired token and updating the secret below is the whole maintenance
-   story.
-2. Store it in this repository as a **secret named `KIT_PUSH_TOKEN`**:
-   Settings -> Secrets and variables -> Actions -> Secrets -> New
-   repository secret (name: `KIT_PUSH_TOKEN`, value: the token). GitHub
-   only releases a secret to workflows at run time - nobody can read it
-   back afterwards, and this kit does not try.
-3. Take the update: **Actions** tab -> **"Sync kit files from
-   template"** -> **"Run workflow"**, twice to confirm. The sync pushes
-   with your token, closes this issue on the spot, and later template
-   updates stay that one same click. (A red run for any *other* reason -
-   a network hiccup, a raced heartbeat - just means run it again a
-   minute later.)
+1. Make a **fine-grained personal access token**: GitHub, top-right avatar -> Settings -> Developer settings -> Fine-grained tokens -> Generate new token. Scope it to **only this repository**, and give the repository permissions **Contents: Read and write** plus **Workflows: Read and write**. Expiry as you like - replacing an expired token and updating the secret below is the whole maintenance story.
+2. Store it in this repository as a **secret named `KIT_PUSH_TOKEN`**: Settings -> Secrets and variables -> Actions -> Secrets -> New repository secret (name: `KIT_PUSH_TOKEN`, value: the token). GitHub only releases a secret to workflows at run time - nobody can read it back afterwards, and this kit does not try.
+3. Take the update: **Actions** tab -> **"Sync kit files from template"** -> **"Run workflow"**, twice to confirm. The sync pushes with your token, closes this issue on the spot, and later template updates stay that one same click. (A red run for any *other* reason - a network hiccup, a raced heartbeat - just means run it again a minute later.)
 
-If this copy is still on **kit 9 or older**: its own button predates the
-token logic, so the *very next* sync (to kit 10) must take the
-**terminal way** below. After that one-time hop, the button with the
-token applies forever. A button run that turns red saying
-"refusing to allow a GitHub App to create or update workflow" means the
-push went out with the bot's credentials: the checkout's own bot-token
-credential can silently override the secret (kit 13 stripped it from
-the local config; kit 18 strips every git config scope and the
-include-file channel that checkout v6+ stores it in), and on any kit it
-can mean the secret is missing - step 1 above is the fix for a missing
-secret. Either way the terminal way below always works and, once a sync
-carrying kit 18 or newer lands, the button works with the token you
-already have.
+If this copy is still on **kit 9 or older**: its own button predates the token logic, so the *very next* sync (to kit 10) must take the **terminal way** below. After that one-time hop, the button with the token applies forever. A button run that turns red saying "refusing to allow a GitHub App to create or update workflow" means the push went out with the bot's credentials: the checkout's own bot-token credential can silently override the secret (kit 13 stripped it from the local config; kit 18 strips every git config scope and the include-file channel that checkout v6+ stores it in), and on any kit it can mean the secret is missing - step 1 above is the fix for a missing secret. Either way the terminal way below always works and, once a sync carrying kit 18 or newer lands, the button works with the token you already have.
 
 (To also get the new version's launcher compiled right away, afterwards click **"Build patched Prism Launcher"** -> **"Run workflow"** once. Otherwise the next scheduled run does it anyway.)
 
@@ -151,41 +119,23 @@ git commit -m 'Sync kit files from template (kit version {REMOTE_VERSION})'
 git push
 ```
 
-(If a remote named `template` already exists, swap the `add` line for
-`git remote set-url template https://github.com/{TEMPLATE_URL}.git`.)
+(If a remote named `template` already exists, swap the `add` line for `git remote set-url template https://github.com/{TEMPLATE_URL}.git`.)
 
-If the push is rejected with "remote contains work that you do not have" or
-a hint about fetching first: this repository's automatic bookkeeping commits
-have moved ahead of your clone. Run
+If the push is rejected with "remote contains work that you do not have" or a hint about fetching first: this repository's automatic bookkeeping commits have moved ahead of your clone. Run
 
 ```
 git pull --rebase origin main
 ```
 
-and push again - your one sync commit lands on top of them harmlessly.
-Never force push.
+and push again - your one sync commit lands on top of them harmlessly. Never force push.
 
-Either route replaces the whole kit - workflow, patch files, scripts, docs
-and the version marker - with the template's copies, leaving everything
-else in the repository (including the `.state/` bookkeeping) untouched.
-After the push, the next run uses the new files, and this issue closes
-itself. (The one-click route closes it before the run, too.)
+Either route replaces the whole kit - workflow, patch files, scripts, docs and the version marker - with the template's copies, leaving everything else in the repository (including the `.state/` bookkeeping) untouched. After the push, the next run uses the new files, and this issue closes itself. (The one-click route closes it before the run, too.)
 
 ## Preferring silence
 
-Set the repository **variable** (not a secret) `KIT_UPDATES_OFF` to `true`
-(Settings -> Secrets and variables -> Actions -> Variables) and this check
-stops running entirely from the next run on. Closing this issue without
-syncing does not prevent a fresh one from being filed on a later run; the
-variable is the real opt-out.
+Set the repository **variable** (not a secret) `KIT_UPDATES_OFF` to `true` (Settings -> Secrets and variables -> Actions -> Variables) and this check stops running entirely from the next run on. Closing this issue without syncing does not prevent a fresh one from being filed on a later run; the variable is the real opt-out.
 
-Two notes on what this opt-out does and does not do: it silences the
-*notice* only. The build workflow still refuses to run while the kit is
-behind the template - that pause is the point of kit 12 and is not part
-of this variable. The one documented bypass is the repository variable
-`build_if_old` set to `true`, which makes builds run even while behind
-(an emergency hatch, e.g. while a broken kit sits at the template's tip
-and you need a build regardless).
+Two notes on what this opt-out does and does not do: it silences the *notice* only. The build workflow still refuses to run while the kit is behind the template - that pause is the point of kit 12 and is not part of this variable. The one documented bypass is the repository variable `build_if_old` set to `true`, which makes builds run even while behind (an emergency hatch, e.g. while a broken kit sits at the template's tip and you need a build regardless).
 '@
       $body = $bodyTemplate.Replace('{REMOTE_VERSION}', $remoteVersion).Replace('{LOCAL_VERSION}', $localVersion).Replace('{TEMPLATE_URL}', $template)
       $body | gh issue create --title $issueTitle --body-file -

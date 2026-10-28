@@ -366,3 +366,19 @@ loudly naming scopes and keys, never values. The fix ships in the
 script the copy runs, so a copy's first hop past kit 16 still needs
 the terminal route from the nudge issue; once a sync carrying kit 18
 lands, the button works again.
+
+### The nudge issue loses the staircase (kit 19)
+
+GitHub renders issue text with hard line breaks: every hand-wrapped
+line in a paragraph becomes its own line in the posted issue. The
+update notice's body was written wrapped (the same disease the
+release-notes template had before kit 15), so a copy's "Template
+update available" issue read as a staircase of mid-sentence lines.
+Kit 19 rewrites the body on the rule kit 15 set for release notes: one
+paragraph, bullet or numbered step per source line, forever - long
+source lines are fine, GitHub wraps them visually at the box width.
+Code blocks keep their own line structure. Log-facing texts (the
+throw-string help in sync-kit) are deliberately untouched: run logs
+print text literally, so their wrapping renders as intended. The body
+is also what the kit's own one-paste hop advice quotes, so a fresh
+issue doubles as the copy-paste source it always was.
