@@ -340,3 +340,29 @@ on Linux kit 17 removes the rename step itself. Backing up the original
 stays the user's first step in every tutorial. Releases already published
 under the old versioned name keep it; the next build of any tag stages
 the new name.
+
+### The sync push could still wear the bot's credential (kit 18)
+
+Kit 13 fixed the first version of this: actions/checkout stores the
+job's own bot token as a git config entry, that entry matches every
+https://github.com URL (including the personal-token push URL), and its
+Authorization value wins - so the sync script removes the entry for the
+push and puts it back after. What kit 13 removed was the entry in the
+repository's local config file, because that is where checkout v4 kept
+it. Kit 15 pinned checkout v7, and checkout v6+ stores the credential
+differently: the bytes sit in a runner temp file, and a local
+`includeIf.gitdir:` entry wires that file into the config. The old
+strip found nothing, the bot credential stayed live, and a copy's
+first kit-17 button sync was refused as a GitHub App on 2026-10-28
+(its push raced a heartbeat first, so the red run also showed the
+retry path working - the refusal only surfaced on push two). Kit 18
+makes the strip storage-blind: it sweeps `http.*.extraheader` and
+`includeIf.gitdir:` entries in every git config scope (system, global,
+local, worktree), then verifies nothing is left before the push and
+restores everything afterwards (include pointers go back first, and a
+value check keeps a v7-style credential from being doubled into the
+local file). If a strip round leaves anything behind, the run fails
+loudly naming scopes and keys, never values. The fix ships in the
+script the copy runs, so a copy's first hop past kit 16 still needs
+the terminal route from the nudge issue; once a sync carrying kit 18
+lands, the button works again.

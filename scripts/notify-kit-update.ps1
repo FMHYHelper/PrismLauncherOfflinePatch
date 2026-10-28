@@ -126,12 +126,14 @@ token logic, so the *very next* sync (to kit 10) must take the
 **terminal way** below. After that one-time hop, the button with the
 token applies forever. A button run that turns red saying
 "refusing to allow a GitHub App to create or update workflow" means the
-push went out with the bot's credentials: on kits before 13 the secret
-could be silently overridden by the checkout's own bot-token header (kit
-13 strips it for the push), and on any kit it can mean the secret is
-missing - step 1 above is the fix for a missing secret. Either way the
-terminal way below always works and, once its sync lands, the button
-works with the token you already have.
+push went out with the bot's credentials: the checkout's own bot-token
+credential can silently override the secret (kit 13 stripped it from
+the local config; kit 18 strips every git config scope and the
+include-file channel that checkout v6+ stores it in), and on any kit it
+can mean the secret is missing - step 1 above is the fix for a missing
+secret. Either way the terminal way below always works and, once a sync
+carrying kit 18 or newer lands, the button works with the token you
+already have.
 
 (To also get the new version's launcher compiled right away, afterwards click **"Build patched Prism Launcher"** -> **"Run workflow"** once. Otherwise the next scheduled run does it anyway.)
 

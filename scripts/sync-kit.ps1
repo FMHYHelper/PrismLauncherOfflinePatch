@@ -31,9 +31,12 @@
 #     loudly with the one-time setup steps for the KIT_PUSH_TOKEN secret
 #     (a fine-grained personal access token), which - when it exists -
 #     this script uses for the push alone (token-in-URL, never stored,
-#     never logged). Copies still on kit 9 or older first reach kit 10 by
-#     the terminal route in the nudge issue: their button predates this
-#     logic.
+#     never logged). Since kit 15's checkout v7 the strip has to sweep
+#     every git config scope: checkout v6+ parks its bot credential in a
+#     runner temp file wired in by an includeIf.gitdir: entry, no longer
+#     in the local config key kit 13 removed (kit 18). Copies still on
+#     kit 9 or older first reach kit 10 by the terminal route in the
+#     nudge issue: their button predates this logic.
 # Closing issues is always best effort: a closed-copy failure in the middle
 # of an otherwise successful sync is a warning, not an error.
 
@@ -182,52 +185,132 @@ if ($kitToken) {
 
 $PSNativeCommandUseErrorActionPreference = $false
 
-$script:kitHeaderBackup = @()
+$script:kitCredentialBackup = @()
 
-function Clear-KitCheckoutAuth {
-  # actions/checkout stores the automatic bot token as repo-local config
-  # http.<url>.extraheader. That header matches EVERY https://github.com URL -
-  # including the token-in-URL push URL - and its Authorization value wins over
-  # the URL's own credentials, so a KIT_PUSH_TOKEN push would go out wearing
-  # the bot's identity and be refused as a GitHub App (seen for real in a
-  # copy's red run; kit 13 removes the header for the push and puts it back).
-  # Capture and remove; Restore-KitCheckoutAuth re-adds them (the race-retry's
-  # pull --rebase needs the ordinary bot auth again). Values are never printed.
-  $script:kitHeaderBackup = @()
+function Get-KitCredentialConfigEntries {
+  # Every config entry actions/checkout installs to authenticate git, in
+  # every scope this working tree can see: the http extraheader itself,
+  # plus the includeif.gitdir: pointers. Since checkout v6 the credential
+  # does not live in the repo's local config file - it sits in a runner
+  # temp file that a local includeif.gitdir: entry wires in, so it shows
+  # up in the config view with scope 'local' while --unset-all on that
+  # scope cannot reach the bytes; removing the pointer is what kills it.
+  # The sweep lists keys only first (a key can itself contain spaces when
+  # a subsection holds a path, so splitting 'key value' at the first
+  # space is not trustworthy), then asks each scope file for that key's
+  # values in a second pass. Values are captured for
+  # Restore-KitCheckoutAuth and never printed. Multi-line values would
+  # not round-trip; checkout's values (one header, one file path) never
+  # have any.
   $prevEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    $raw = @(& git config --local --get-regexp '^http\..*\.extraheader' 2>$null)
-    foreach ($line in $raw) {
-      $i = $line.IndexOf(' ')
-      if ($i -gt 0) {
-        $script:kitHeaderBackup += [pscustomobject]@{
-          key   = $line.Substring(0, $i)
-          value = $line.Substring($i + 1)
+    $raw = @(& git config --show-scope --name-only --get-regexp '^(http\..*\.extraheader|includeif\.gitdir:)' 2>$null)
+  }
+  finally { $ErrorActionPreference = $prevEap }
+  if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) {
+    throw "git config --get-regexp failed (exit code $LASTEXITCODE)"
+  }
+  $entries = @()
+  $seen = @{}
+  foreach ($line in $raw) {
+    $tab = $line.IndexOf("`t")
+    if ($tab -lt 0) { throw "unexpected git config output (not shown)" }
+    $scope = $line.Substring(0, $tab)
+    $key = $line.Substring($tab + 1)
+    # --name-only prints one line per VALUE sighting; the same (scope, key)
+    # can appear several times. One value pass per pair is enough - and
+    # required: a scope-flagged read does not follow the include, so a
+    # re-read of the include's sighting would capture the wrong value and
+    # later double it into the local file on restore.
+    $id = "$scope`n$key"
+    if ($seen.ContainsKey($id)) { continue }
+    $seen[$id] = $true
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      $values = @(& git config "--$scope" --get-all $key 2>$null)
+    }
+    finally { $ErrorActionPreference = $prevEap }
+    if ($LASTEXITCODE -ne 0) { $values = @() }
+    foreach ($value in $values) {
+      $entries += [pscustomobject]@{ scope = $scope; key = $key; value = $value }
+    }
+  }
+  return $entries
+}
+
+function Clear-KitCheckoutAuth {
+  # Kit 13 removed the checkout-stored bot-token header from the repo's
+  # local git config - where checkout v4 kept it. Kit 15 pinned checkout
+  # v7, and checkout v6+ instead parks the credential in a runner temp
+  # file wired in through a local includeIf.gitdir: entry, so the
+  # local-only unset found nothing and the push went out wearing the
+  # bot's identity - exactly what a copy's first kit-17 button sync hit
+  # on 2026-10-28 (refused as a GitHub App even with the personal token
+  # in the push URL). This strip is storage-blind: capture every
+  # extraheader and every includeIf.gitdir: pointer in every scope,
+  # remove them, and verify nothing is left, so the personal token in
+  # the push URL is the only credential the push can carry.
+  # Restore-KitCheckoutAuth puts everything back for the race-retry's
+  # pull --rebase. Failures name scopes and keys, never values.
+  $script:kitCredentialBackup = @()
+  for ($round = 1; $round -le 3; $round++) {
+    $entries = @(Get-KitCredentialConfigEntries)
+    if (-not $entries.Count) { break }
+    $script:kitCredentialBackup += $entries
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      foreach ($e in $entries) {
+        switch ($e.scope) {
+          'system'   { & git config --system   --unset-all $e.key 2>$null | Out-Null }
+          'global'   { & git config --global   --unset-all $e.key 2>$null | Out-Null }
+          'local'    { & git config --local    --unset-all $e.key 2>$null | Out-Null }
+          'worktree' { & git config --worktree --unset-all $e.key 2>$null | Out-Null }
+          default    { throw "unexpected git config scope '$($e.scope)' (entry not shown)" }
         }
       }
     }
-    foreach ($e in $script:kitHeaderBackup) {
-      & git config --local --unset-all $e.key 2>$null | Out-Null
-    }
+    finally { $ErrorActionPreference = $prevEap }
   }
-  finally { $ErrorActionPreference = $prevEap }
-  if ($script:kitHeaderBackup.Count) {
-    Write-Host ("Removed {0} checkout credential header(s) for the token push (restored right after)." -f $script:kitHeaderBackup.Count)
+  $left = @(Get-KitCredentialConfigEntries)
+  if ($left.Count) {
+    $detail = ($left | ForEach-Object { "$($_.scope) $($_.key)" }) -join '; '
+    throw ("Could not strip the checkout credentials after 3 rounds; still present: {0}. Rerun this workflow once; if it fails the same way, use the terminal route in the 'Template update available' issue." -f $detail)
+  }
+  if ($script:kitCredentialBackup.Count) {
+    $scopes = @($script:kitCredentialBackup | Select-Object -ExpandProperty scope -Unique)
+    Write-Host ("Removed {0} checkout credential entry(ies) across {1} git config scope(s) for the token push (restored right after)." -f $script:kitCredentialBackup.Count, $scopes.Count)
   }
 }
 
 function Restore-KitCheckoutAuth {
-  # Best-effort restore of the headers captured by Clear-KitCheckoutAuth.
+  # Best-effort restore of everything Clear-KitCheckoutAuth captured.
+  # includeIf.gitdir: pointers go back first, so a credential that lives
+  # inside a pointed-at file is visible again before the per-scope value
+  # check decides whether the extraheader itself needs re-adding - without
+  # that check, a v7-style include plus a blindly re-added local copy
+  # would leave two Authorization headers in the config view. The check
+  # reads the entry's own scope only, so same-valued entries in different
+  # scopes each get restored.
+  if (-not $script:kitCredentialBackup.Count) { return }
   $prevEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    foreach ($e in $script:kitHeaderBackup) {
-      & git config --local $e.key $e.value 2>$null | Out-Null
+    $ordered = @($script:kitCredentialBackup | Where-Object { $_.key -like 'include*' }) +
+               @($script:kitCredentialBackup | Where-Object { $_.key -notlike 'include*' })
+    foreach ($e in $ordered) {
+      $present = @(& git config "--$($e.scope)" --get-all $e.key 2>$null)
+      if ($present -contains $e.value) { continue }
+      # --add, not plain set: a plain set REPLACES the key's last value,
+      # which would quietly eat a previously restored value of a
+      # multi-value key.
+      & git config "--$($e.scope)" --add $e.key $e.value 2>$null | Out-Null
     }
   }
   finally { $ErrorActionPreference = $prevEap }
-  $script:kitHeaderBackup = @()
+  $script:kitCredentialBackup = @()
 }
 
 function Invoke-KitPush {
@@ -237,8 +320,9 @@ function Invoke-KitPush {
   # explicitly: on Windows PowerShell 5.1, native stderr under 'Stop'
   # becomes a terminating NativeCommandError (a trap this kit's own gh
   # probes hit before), and the push output is pure stderr. On the token
-  # path the checkout's bot-token header is removed for the attempt and
-  # restored afterwards (see Clear-KitCheckoutAuth).
+  # path the checkout's stored credentials are stripped for the attempt -
+  # in every git config scope (see Clear-KitCheckoutAuth) - and restored
+  # afterwards.
   param([string]$Branch)
   $target = if ($kitPushUrl) { $kitPushUrl } else { 'origin' }
   if ($kitPushUrl) { Clear-KitCheckoutAuth }
@@ -290,15 +374,18 @@ button).
 
 $kitWorkflowRefusalTokenUsedHelp = @"
 The push was refused as a GitHub App even though KIT_PUSH_TOKEN was in
-use - it went out wearing the bot's identity. On kits before 13 the
-checkout's stored bot-token header overrides the personal token in the
-push URL (kit 13 removes that header for the push). The one-time way out
-that ignores the button entirely: the terminal route in the 'Template
-update available' issue (four git commands in any clone or codespace).
-Once that sync lands, the button works with the token you already have.
-If this copy is already at kit 13 or newer, check the token itself: it
-must be a fine-grained personal access token with Contents = Read and
-write and Workflows = Read and write on THIS repository.
+use - it went out wearing the bot's identity. The checkout's stored
+bot-token credential overrides the personal token in the push URL. Kit
+13 strips that credential for the push, and kit 18 strips it in every
+git config scope plus the include-file channel that checkout v6+ keeps
+it in. The one-time way out that ignores the button entirely: the
+terminal route in the 'Template update available' issue (a handful of
+git commands in any clone or codespace). Once a sync carrying kit 18 or
+newer lands, the button works with the token you already have. If this
+copy is already at kit 18 or newer and you still see this, check the
+token itself: it must be a fine-grained personal access token with
+Contents = Read and write and Workflows = Read and write on THIS
+repository.
 "@
 
 $pushExit = Invoke-KitPush -Branch $branch
