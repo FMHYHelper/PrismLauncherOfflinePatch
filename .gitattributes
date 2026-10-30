@@ -1,4 +1,7 @@
 # Normalize all text to LF everywhere; patch files must never gain CRLF endings.
+# Exception: cmd wrappers - cmd.exe parses labels and multi-line rem correctly
+# only with CRLF (kit 21).
 * text=auto eol=lf
 *.patch text eol=lf
 *.ps1 text eol=lf
+*.cmd text eol=crlf

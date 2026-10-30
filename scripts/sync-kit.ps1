@@ -144,7 +144,7 @@ if ([int]$templateVersion -le [int]$localVersion) {
 }
 
 # ---- replace the kit paths (overlay: nothing else is removed) ----------------
-$kitPaths = @('.github/workflows', 'README.md', 'MAINTAINING.md', 'KIT-VERSION', 'docs', 'patches', 'scripts')
+$kitPaths = @('.github/workflows', 'README.md', 'MAINTAINING.md', 'KIT-VERSION', 'docs', 'patches', 'scripts', 'updater')
 foreach ($p in $kitPaths) {
   git checkout template/main -- $p
   if ($LASTEXITCODE -ne 0) { throw "Could not take '$p' from the template" }

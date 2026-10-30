@@ -23,6 +23,18 @@ Every platform the official release supports is built from the same tag, each wi
 - **macOS, full app** (`PrismLauncher-macOS-{{TAG}}.dmg`): the easy route - open it and drag the app to Applications, replacing the official copy. Ad-hoc signed on macOS 12 and newer; Gatekeeper asks on the first launch - right-click the app and choose *Open*, or use *Open Anyway* under System Settings > Privacy & Security on Apple Silicon.
 - **macOS, drop-in binary** (`prismlauncher-macos`): the bare patched universal binary, for an existing official installation. Replace the official `prismlauncher` inside the app's `Contents/MacOS` (keep a backup of the original). Apple refuses the first launch of the swapped bundle - signature behavior, not corruption - so re-sign the bundle once with `codesign --force --deep -s - "/Applications/Prism Launcher.app"`.
 
+## Updating later
+
+Releases also carry a small update helper - plain scripts named `update-*`
+(`update-prism.cmd` plus `update-patcher.ps1` on Windows, `update-patcher.sh`
+on Linux and macOS). Download them from this page and run the matching one:
+it fetches the newest patched build from this repository, verifies it
+against `checksums.txt`, backs the old file up, and swaps the new one in.
+Optional, run by hand, and never part of the launcher - the launcher itself
+stays exactly the four patches. A daily background check can be turned on
+on Windows and Linux; on macOS that is not wired up yet (coming with a
+later kit), so there the helper updates when you run it.
+
 ## Install
 
 Official first, patched file second - the same order on every platform:

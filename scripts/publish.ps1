@@ -24,6 +24,7 @@ $repoRoot = Find-RepoRoot
 
 if (-not $env:GH_TOKEN) { throw "GH_TOKEN is not set" }
 if (-not $env:GH_REPO)  { throw "GH_REPO is not set" }
+if (-not $env:GITHUB_REPOSITORY) { throw "GITHUB_REPOSITORY is not set" }
 
 # ---- tags this run meant to publish, with their release flags -------------
 $meta = @{}
@@ -85,12 +86,33 @@ foreach ($tag in @($byTag.Keys)) {
     $patchPath = Join-Path $stage ("source-patches-" + $tag + ".patch")
     [IO.File]::WriteAllText($patchPath, $sb.ToString(), $utf8)
 
+    # 1b. the update helper (kit 21): plain-text scripts shipped as release
+    #     assets with the source repository baked in, so the helper a user
+    #     holds talks to the repository that published that release. They
+    #     are deliberately outside the launcher build - the binaries carry
+    #     exactly the four patches and nothing else.
+    $updaterDir = Join-Path $repoRoot 'updater'
+    $helperFiles = @(Get-ChildItem $updaterDir -File |
+        Where-Object { $_.Name -match '\.(ps1|sh|cmd)$' } | Sort-Object Name)
+    if ($helperFiles.Count -eq 0) { throw "No update helper files found under updater/" }
+    $helperPaths = @()
+    foreach ($h in $helperFiles) {
+        $text = [IO.File]::ReadAllText($h.FullName)
+        $text = $text.Replace('{{SOURCE_REPO}}', $env:GITHUB_REPOSITORY)
+        if ($text.Contains('{{SOURCE_REPO}}')) { throw ("could not substitute the source repository in " + $h.Name) }
+        $outPath = Join-Path $stage $h.Name
+        [IO.File]::WriteAllText($outPath, $text, $utf8)
+        $helperPaths += $outPath
+    }
+    Write-Host ("Staged update helper files: " + (($helperFiles | ForEach-Object { $_.Name }) -join ', '))
+
     # 2. checksums over every published file, built binaries included
     $assets = @()
     foreach ($f in @($byTag[$tag].files | Sort-Object Name)) {
         $assets += $f.FullName
     }
     $assets += $patchPath
+    $assets += $helperPaths
 
     $lines = @()
     $seenNames = @{}

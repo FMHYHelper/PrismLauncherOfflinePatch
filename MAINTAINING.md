@@ -415,3 +415,57 @@ failures from one 34-second dispatch race. Kit 20 closes the window:
 - The operational rule stands: do not dispatch a run while another is
   still finishing. Kit 20 survives the overlap; the queue time is still
   wasted.
+
+### The optional update helper ships with every release (kit 21)
+
+Kit 21 adds `updater/` - an update helper for the patched builds, shipped
+as plain release assets and never built into the launcher. The binaries
+keep carrying exactly the four patches; the helper is a stand-in for the
+user's own hands (download the newest release, check it against
+checksums.txt, back the old file up, swap it in), run by the user, on the
+user's machine, talking only to the copy's Releases. It exists because the
+in-app updater only knows official builds, so updating a patched install
+was always a manual paste.
+
+- Assets per release: `update-patcher.ps1`, `update-patcher.sh`, and three
+  `.cmd` wrappers, staged by publish.ps1 with `{{SOURCE_REPO}}` replaced by
+  `$GITHUB_REPOSITORY` - the helper a release page hands out talks to the
+  repository that published it, and an unsubstituted copy (one taken from
+  the repository itself instead of the release) refuses to run and says
+  so. The helper files are hashed into checksums.txt like everything else,
+  and their names sort them to the bottom of the release page on purpose,
+  beneath the files that matter daily.
+- A marker file (`.update-patcher.json`) next to the installed launcher
+  records tag, checksum and source, so later runs can tell "current",
+  "older patched build", and "the official update replaced the exe" apart -
+  and in the last case the helper re-applies the newest patched build,
+  which is the documented routine.
+- Windows-only guard: a patched exe is never swapped in across a
+  major.minor line difference. The folder's Qt runtime files move only
+  with the official update, so on a jump the helper waits, says so, and
+  re-applies on its own after the official update ran - the README's
+  version-jump procedure, enforced by the helper. Linux and macOS swap
+  freely (their builds carry their own runtime) but never downgrade a
+  newer official install to an older patched build.
+- The optional daily background check is a per-user Windows scheduled task
+  or a systemd user timer (no admin rights; removed with
+  update-check-disable). On macOS it is deferred to kit 22 - launchd
+  cannot be proven from here today - and the script says so instead of
+  pretending.
+- The gate: the pipeline gained an `updater-selftest` job - the same
+  matrix as build, on the same runner types - which assembles a local test
+  release from the run's own build artifacts (checksums.txt regenerated in
+  the exact format publish writes, tag.txt beside it; no network involved)
+  and drives the helper through update, idempotence, tampered-checksums
+  refusal, and the background check on/off (Windows + Linux; macOS through
+  the manual flow). Publish waits on it, and finalize's --advance now
+  needs build success AND selftest success AND publish success (or the
+  template's by-design publish skip). A red self-test holds the release,
+  exactly like a red build does.
+- This is also how macOS gets proof without owning a Mac: the self-test
+  runs on a real macOS runner every time a build runs - including the
+  template's own daily no-binaries run, which validates the helper daily
+  for free.
+- sync-kit's `$kitPaths` now carries `updater/`, and .gitattributes pins
+  `*.cmd text eol=crlf` - cmd.exe parses the wrappers correctly only with
+  CRLF endings, while the PowerShell and bash sides stay LF.

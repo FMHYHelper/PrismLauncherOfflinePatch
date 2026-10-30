@@ -80,6 +80,11 @@ After that you do nothing. When the launcher team publishes a new version, a
 fresh patched build shows up in your Releases within a day - for every
 platform your copy builds.
 
+> Rather not do the paste by hand every time? Releases also carry a small
+> **update helper** - plain scripts that do the same swap for you, checksum
+> check and backup included. It is optional, you run it yourself, and it is
+> never built into the launcher. See *Updating with the helper* below.
+
 ## What gets built, and where
 
 Every upstream version produces one release in your copy containing, for the
@@ -93,6 +98,7 @@ with):
 | `PrismLauncher-macOS-<tag>.dmg` | macOS | a complete app, drag to Applications (tutorial below: macOS route 1) |
 | `prismlauncher-macos` | macOS | the bare patched binary, swapped into an official app (tutorial below: macOS route 2) |
 | `source-patches-<tag>.patch` + `checksums.txt` | all | the exact source diff applied, and the expected checksums of every file |
+| `update-patcher.ps1` / `.sh` + the `update-*.cmd` wrappers | all | the optional update helper - plain scripts you download and run yourself (see *Updating with the helper*) |
 
 Notes worth having in writing:
 
@@ -108,7 +114,8 @@ Notes worth having in writing:
   continues to exist on its own and is untouched by this template.
 - **The in-app updater only knows official builds** (that is exactly what
   the version-jump section below relies on). Updating a *patched* install
-  means replacing its files from your own Releases.
+  means replacing its files from your own Releases - by hand as in the
+  tutorials, or with the optional helper described below.
 - **Need fewer platforms?** macOS runners cost about 10x the minutes on
   private repositories (Windows 2x, Linux 1x; all three are free on public
   repositories). Set the repository **variable** `platforms` (same place as
@@ -212,6 +219,57 @@ Both macOS routes keep everything else stock: accounts, instances and
 settings stay exactly where the official launcher keeps them, and the
 DMG is the same patched app packaged the official way.
 
+## Updating with the helper (optional)
+
+Every release also carries a handful of plain-text scripts named `update-*`
+- the **update helper**. It is not part of the launcher and is never built
+into it: the patched launcher contains exactly the four patches, nothing
+else. The helper is a stand-in for your own hands - it downloads the newest
+release from *this* repository (the copy's repository name is baked into the
+script when that release is published), checks the file against
+`checksums.txt`, backs the old file up, and swaps the new one in. It talks
+to exactly two things: that repository's GitHub API and its download
+servers. The scripts are plain text - read them before running them; that is
+the point of everything here.
+
+**Windows:** download `update-patcher.ps1` and the three `.cmd` wrappers
+into any folder and double-click `update-prism.cmd`. The first run asks
+where your Prism Launcher folder is; every later run compares versions and
+only acts when a newer patched build exists. It also knows the one Windows
+trap from the section above - a version jump needs the official update
+first (the folder's Qt runtime files move with it) - so on a jump it says
+so, waits, and re-applies the patch on its own once the official update has
+run. The wrappers:
+
+- `update-prism.cmd` - update now, interactively.
+- `update-check-enable.cmd` - optional: a daily background check (a per-user
+  scheduled task; no admin rights). It updates silently when the launcher is
+  closed and only notifies you when a swap has to wait for you.
+- `update-check-disable.cmd` - remove the background task again.
+- `update-patcher.ps1` - the engine; run from a terminal it also has
+  `check` (report only) and `status` modes.
+
+**Linux and Steam Deck (desktop mode):** download `update-patcher.sh` and
+run `bash update-patcher.sh`. Same deal - checksum, backup, swap in place -
+and the file name never changes, so menu entries and Steam shortcuts keep
+working. The swap is safe even while the launcher is running; the new
+version starts at the next launch. `enable-check` / `disable-check` turn a
+daily systemd user timer on and off.
+
+**macOS:** the same script - `bash update-patcher.sh` - mounts the new DMG,
+verifies it, and swaps the app. The DMG was fetched by the script itself,
+which leaves no quarantine mark, so Gatekeeper should not ask again. The
+background check is not wired up on macOS yet (planned for a coming kit);
+the manual route works today.
+
+The helper keeps its own record next to the install (`.update-patcher.json`)
+and a log in your profile folder (`%LocalAppData%\PrismPatcher` on Windows,
+`~/.local/share/prism-patcher` elsewhere). Delete both and it forgets
+everything. If the official updater replaced the launcher in between, the
+helper notices, says so, and puts the newest patched build back on top -
+exactly the routine from the version-jump section above. Backups
+(`*.bak-...`) accumulate next to the install; delete old ones by hand.
+
 ---
 
 ## When a new launcher version comes out
@@ -271,6 +329,12 @@ the run. Two fixes cover almost everything:
   you can rerun the workflow with `upstream_ref` pinned to the last tag that
   worked.
 - **A network hiccup** (Qt download, GitHub API). Just rerun the workflow.
+- **The update helper failed its self-test** (kit 21). Before publishing, a
+  run now also drives the helper on real runners on every platform that
+  was built; a failure holds the release back and turns the run red. Rerun
+  once - a flaky runner does happen - and if it repeats, the failing check
+  is named in the `updater-selftest` job's log. The release publishes only
+  after the helper passes.
 
 ---
 
@@ -341,8 +405,8 @@ The details, condensed:
   (an emergency hatch for "I need a build even while behind").
 
 The update replaces the template's copies of the whole kit -
-`.github/workflows/`, `patches/`, `scripts/`, `docs/`, `README.md`,
-`MAINTAINING.md` and `KIT-VERSION` - while touching nothing else in the
+`.github/workflows/`, `patches/`, `scripts/`, `docs/`, `updater/`,
+`README.md`, `MAINTAINING.md` and `KIT-VERSION` - while touching nothing else in the
 repository, including the `.state/` bookkeeping the runs maintain.
 
 ---
@@ -394,6 +458,13 @@ lists are untouched.
 present because the launcher links Qt's OAuth helper for its genuine Microsoft
 login feature.
 
+One line belongs next to them: **the four patches are the whole diff.** No
+updater, no telemetry, no phone-home is ever added to the launcher - the
+binaries a run produces are the upstream source with exactly these patches
+on top and nothing else. The optional update helper is a separate script
+you download from the Releases page and run yourself; it lives beside the
+release, never inside the launcher (see *Updating with the helper*).
+
 ### How the pipeline decides what to build
 
 > **Where releases appear.** On the template itself, a scheduled run only
@@ -415,10 +486,11 @@ login feature.
 4. Assets per release: one file per platform - the Windows exe, the Linux
    AppImage, and the macOS pair (DMG plus bare `prismlauncher-macos`
    binary) - plus `source-patches-<tag>.patch` (the exact source diff
-   applied) and one `checksums.txt` covering every file. Nothing else is
-   shipped. (Kit 9 deliberately dropped the old portable zip and tarball
-   attachments; the install tutorials and the version-jump section above
-   carry the reasoning.)
+   applied), one `checksums.txt` covering every file, and the update
+   helper's plain scripts under `update-*` (see *Updating with the
+   helper*). Nothing else is shipped. (Kit 9 deliberately dropped the old
+   portable zip and tarball attachments; the install tutorials and the
+   version-jump section above carry the reasoning.)
 5. If nothing upstream changed and the patches are unchanged, the run only
    updates its state file and stops - no build, no release, no spam.
 
@@ -458,9 +530,10 @@ Rules that keep the pipeline honest:
 | Path | Purpose |
 |---|---|
 | `patches/` | the patch set applied to every build |
-| `.github/workflows/build-patched.yml` | the whole pipeline |
+| `updater/` | the optional update helper - plain scripts shipped as release assets, never built into the launcher |
+| `.github/workflows/build-patched.yml` | the whole pipeline, helper self-test included |
 | `.github/workflows/sync-from-template.yml` | the one-click update button (manual only) |
-| `scripts/` | decision + bookkeeping + sync helpers (plain PowerShell) |
+| `scripts/` | decision + bookkeeping + sync + helper self-test helpers (plain PowerShell) |
 | `.state/last-build.json` | which tags the automation has handled so far |
 | `docs/fingerprint.txt` | provenance values for verifying bundles you produced |
 | `MAINTAINING.md` | notes for tending the template branch itself |
