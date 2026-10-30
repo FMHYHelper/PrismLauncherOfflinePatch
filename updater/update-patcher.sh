@@ -10,12 +10,14 @@
 # it against checksums.txt, back the old file up, and swap it in.
 #
 # Modes:
-#   apply          interactive update (the default)
+#   apply          interactive update (the default); asks Update / Cancel /
+#                  Ignore this update (--yes skips the questions and installs
+#                  even an ignored version)
 #   auto           non-interactive: update when needed, silent when current
 #                  (the mode the optional background timer runs)
 #   check          report only: installed version vs. latest release
 #   enable-check   set up the optional daily background check
-#                  (Linux: a systemd user timer; macOS: planned, not yet)
+#                  (Linux: a systemd user timer; macOS: not yet)
 #   disable-check  remove the background timer again
 #   status         show what is installed and what the timer is
 #
@@ -24,7 +26,9 @@
 # GitHub API and download servers of that one repository.
 #
 # Files:
-#   .update-patcher.json  - marker written next to the installed target
+#   .update-patcher.json  - marker written next to the installed target; its
+#                           ignored field records a version the user chose
+#                           to skip (a newer release asks again)
 #   *.bak-<timestamp>     - backups; they accumulate, delete old ones by hand
 #
 # Usage:
@@ -43,6 +47,7 @@ DIR=""
 APP=""
 SRCDIR=""
 TMPD=""
+YES=""
 # globals the flow functions share:
 TAG=""
 ASSET_NAME=""
@@ -67,7 +72,7 @@ while [ $# -gt 0 ]; do
     --dir)        [ $# -ge 2 ] || die "--dir needs a value";       DIR="$2";    shift 2 ;;
     --app)        [ $# -ge 2 ] || die "--app needs a value";       APP="$2";    shift 2 ;;
     --source-dir) [ $# -ge 2 ] || die "--source-dir needs a value"; SRCDIR="$2"; shift 2 ;;
-    --yes)        shift ;;
+    --yes)        YES=1; shift ;;
     *) die "unknown argument: $1 (modes: apply | auto | check | enable-check | disable-check | status)" ;;
   esac
 done
@@ -142,6 +147,69 @@ notify() {
   elif [ "$OS" = "Darwin" ] && command -v osascript >/dev/null 2>&1; then
     osascript -e "display notification \"$*\" with title \"Prism Launcher (patched)\"" 2>/dev/null || true
   fi
+}
+
+ask_choice() { # $1 = version; prints one of: update | cancel | ignore
+  # The three answers:
+  #   update - fetch, verify and swap now
+  #   cancel - do nothing until the next check
+  #   ignore - record this exact version so it stops being suggested
+  #            (a newer version asks again)
+  # A desktop dialog first where one exists, the terminal otherwise, and
+  # "cancel" - the answer that changes nothing - whenever no question can
+  # be asked at all (no terminal, the self-test's CI runners). Never hangs.
+  if [ -n "${CI:-}" ] || [ ! -t 0 ]; then printf 'cancel\n'; return; fi
+  if [ "$OS" = "Darwin" ] && command -v osascript >/dev/null 2>&1; then
+    local btn
+    btn="$(osascript -e "display dialog \"Update to $1 now?\" with title \"Prism Launcher (patched)\" buttons {\"Update\", \"Cancel\", \"Ignore this update\"} default button \"Update\"" 2>/dev/null |
+      sed -n 's/.*button returned://p')"
+    case "$btn" in
+      Update)              printf 'update\n'; return ;;
+      "Ignore this update") printf 'ignore\n'; return ;;
+      Cancel)              printf 'cancel\n'; return ;;
+      *) ;;  # osascript could not show a dialog - ask in the terminal
+    esac
+  fi
+  if [ "$OS" = "Linux" ] && command -v zenity >/dev/null 2>&1; then
+    local pick rc
+    pick="$(zenity --list --title 'Prism Launcher (patched)' --text "Update to $1 now?" \
+      --column Choice 'Update' 'Cancel' 'Ignore this update' 2>/dev/null)"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      case "$pick" in
+        Update)               printf 'update\n'; return ;;
+        "Ignore this update") printf 'ignore\n'; return ;;
+        *)                    printf 'cancel\n'; return ;;
+      esac
+    fi
+    if [ "$rc" -eq 1 ]; then printf 'cancel\n'; return; fi
+    # any other zenity failure (no display) - ask in the terminal
+  fi
+  printf 'Update to %s now? [Enter = update, i = ignore this update, anything else = cancel] ' "$1"
+  local answer
+  read -r answer || { printf 'cancel\n'; return; }
+  case "$answer" in
+    [Ii]|ign*|Ign*|IGN*) printf 'ignore\n' ;;
+    [Nn]|n*|[Cc]|c*)     printf 'cancel\n' ;;
+    *)                   printf 'update\n' ;;
+  esac
+}
+
+write_ignore() { # $1 = marker path; TAG is the version to record
+  # Records "the user chose to skip this exact version" on the marker,
+  # keeping every field it already carries.
+  local mpath="$1" old_tag asset_ sha_ repo_ target_ at_ helper_
+  old_tag="$(marker_field tag "$mpath" || true)"
+  asset_="$(marker_field asset "$mpath" || true)"
+  sha_="$(marker_field sha256 "$mpath" || true)"
+  repo_="$(marker_field repo "$mpath" || true)"
+  target_="$(marker_field target "$mpath" || true)"
+  at_="$(marker_field installed_at "$mpath" || true)"
+  helper_="$(marker_field helper "$mpath" || true)"
+  printf '{"tag":"%s","asset":"%s","sha256":"%s","repo":"%s","target":"%s","installed_at":"%s","helper":"%s","ignored":"%s","ignored_at":"%s"}\n' \
+    "$old_tag" "$asset_" "$sha_" "$repo_" "$target_" "$at_" "$helper_" \
+    "$TAG" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$mpath" \
+    || die "could not write the marker file"
 }
 
 fetch() { # $1 = url, $2 = output file
@@ -243,9 +311,19 @@ install_linux() {
   chmod 755 "$TARGET" || die "could not set the executable bit"
   GOT="$(sha256_of "$TARGET")"
   if [ "$GOT" != "$EXPECTED" ]; then die "the swapped file does not match the checksum - inspect $TARGET_DIR"; fi
-  printf '{"tag":"%s","asset":"%s","sha256":"%s","repo":"%s","target":"%s","installed_at":"%s","helper":"kit-21"}\n' \
-    "$TAG" "$ASSET_NAME" "$GOT" "$REPO" "$TARGET" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$TARGET_DIR/$MARKER" \
-    || die "could not write the marker file"
+  # an ignore of an OLDER version carries forward; installing the ignored
+  # version itself is what clears it
+  OLD_IGN="$(marker_field ignored "$TARGET_DIR/$MARKER" || true)"
+  if [ "$OLD_IGN" = "$TAG" ]; then OLD_IGN=""; fi
+  if [ -n "$OLD_IGN" ]; then
+    printf '{"tag":"%s","asset":"%s","sha256":"%s","repo":"%s","target":"%s","installed_at":"%s","helper":"kit-22","ignored":"%s"}\n' \
+      "$TAG" "$ASSET_NAME" "$GOT" "$REPO" "$TARGET" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$OLD_IGN" > "$TARGET_DIR/$MARKER" \
+      || die "could not write the marker file"
+  else
+    printf '{"tag":"%s","asset":"%s","sha256":"%s","repo":"%s","target":"%s","installed_at":"%s","helper":"kit-22"}\n' \
+      "$TAG" "$ASSET_NAME" "$GOT" "$REPO" "$TARGET" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$TARGET_DIR/$MARKER" \
+      || die "could not write the marker file"
+  fi
   info "  done - the patched launcher is now $TAG. Menu entries and Steam links"
   info "  keep working: the file name never changed."
   add_log "updated to $TAG"
@@ -314,9 +392,19 @@ install_macos() {
   if [ "$NEWVER" != "$TAG" ]; then
     die "the installed app reports version '$NEWVER', expected '$TAG' (the old app is safe at $BACKUP)"
   fi
-  printf '{"tag":"%s","asset":"%s","sha256":"%s","repo":"%s","target":"%s","installed_at":"%s","helper":"kit-21"}\n' \
-    "$TAG" "$ASSET_NAME" "$GOT" "$REPO" "$MAC_APP" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$APP_DIR/$MARKER" \
-    || die "could not write the marker file"
+  # an ignore of an OLDER version carries forward; installing the ignored
+  # version itself is what clears it
+  OLD_IGN="$(marker_field ignored "$APP_DIR/$MARKER" || true)"
+  if [ "$OLD_IGN" = "$TAG" ]; then OLD_IGN=""; fi
+  if [ -n "$OLD_IGN" ]; then
+    printf '{"tag":"%s","asset":"%s","sha256":"%s","repo":"%s","target":"%s","installed_at":"%s","helper":"kit-22","ignored":"%s"}\n' \
+      "$TAG" "$ASSET_NAME" "$GOT" "$REPO" "$MAC_APP" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$OLD_IGN" > "$APP_DIR/$MARKER" \
+      || die "could not write the marker file"
+  else
+    printf '{"tag":"%s","asset":"%s","sha256":"%s","repo":"%s","target":"%s","installed_at":"%s","helper":"kit-22"}\n' \
+      "$TAG" "$ASSET_NAME" "$GOT" "$REPO" "$MAC_APP" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$APP_DIR/$MARKER" \
+      || die "could not write the marker file"
+  fi
   info "  old app kept as $(basename "$BACKUP")"
   info "  done - the patched launcher is now $TAG."
   info "  Files fetched by a script carry no quarantine mark, so Gatekeeper"
@@ -324,12 +412,12 @@ install_macos() {
   add_log "updated to $TAG"
 }
 
-# ---- background check (Linux systemd user timer; macOS: planned) ---------------
+# ---- background check (Linux systemd user timer; macOS: not yet) ---------------
 
 enable_check() {
   if [ "$OS" = "Darwin" ]; then
-    info "The background check is not available on macOS yet (planned for the next"
-    info "kit). The manual update works today: run this script without arguments."
+    info "The background check is not available on macOS yet (still planned)."
+    info "The manual update works today: run this script without arguments."
     return 0
   fi
   command -v systemctl >/dev/null 2>&1 || die "systemctl not found - the background check needs systemd"
@@ -363,7 +451,8 @@ EOF
   add_log "background check enabled (daily, randomized by 45m, catch-up when the machine was off)"
   info "Background check is on: a systemd user timer runs this script daily in"
   info "auto mode. On Linux the swap is safe even while the launcher runs - the"
-  info "new version starts at the next launch. Everything it does lands in"
+  info "new version starts at the next launch. It stays silent about a version"
+  info "you chose to ignore. Everything it does lands in"
   info "  $LOGFILE"
   info "Remove it anytime: bash update-patcher.sh disable-check"
 }
@@ -406,40 +495,64 @@ case "$MODE" in
     fi
     if [ -n "$INSTALLED" ] && [ "$(compare_tags "$INSTALLED" "$TAG")" != "-1" ]; then
       info "This install is up to date."
+    elif [ "$(marker_field ignored "$MPATH" || true)" = "$TAG" ]; then
+      info "The update to $TAG is the one you chose to ignore -"
+      info "'apply --yes' installs it anyway."
     else
       info "An update is available - run: bash update-patcher.sh apply"
     fi
     ;;
 
   apply)
+    # Interactive update. The question comes before any download (a declined
+    # update costs nothing), with three answers: update now, cancel, or
+    # ignore this exact version. --yes skips the question and installs even
+    # an ignored version.
     get_release
     if [ "$OS" = "Linux" ]; then
       find_linux_target
-      info "Latest patched release: $TAG (source: $REPO)"
-      info "What changed: https://github.com/$REPO/releases/tag/$TAG"
-      info ""
+      MPATH="$(dirname "$TARGET")/$MARKER"
+    else
+      find_mac_target
+      MPATH="$(dirname "$MAC_APP")/$MARKER"
+    fi
+    if [ -z "$YES" ] && [ "$(marker_field ignored "$MPATH" || true)" = "$TAG" ]; then
+      info "You chose to ignore $TAG, so the helper does not suggest it again."
+      info "The next patched release will ask normally. To install this one anyway:"
+      info "  bash update-patcher.sh apply --yes"
+      info "Nothing was changed."
+      exit 0
+    fi
+    info "Latest patched release: $TAG (source: $REPO)"
+    info "What changed: https://github.com/$REPO/releases/tag/$TAG"
+    info ""
+    if [ "$OS" = "Linux" ]; then
       info "Target: $TARGET"
       info "The swap is safe while the launcher runs (it executes from its own"
       info "mounted copy); the new version starts at the next launch."
-      printf 'Update now? [Enter = yes] '
-      read -r answer
-      case "$answer" in [Nn]*) info "cancelled; nothing changed."; exit 0 ;; esac
-      install_linux
     else
-      find_mac_target
-      if pgrep -f "Prism Launcher.app/Contents/MacOS" >/dev/null 2>&1; then
-        info "  Prism Launcher is running. Close it, then press Enter (Ctrl+C to abort)."
-        read -r dummy
-      fi
-      info "Latest patched release: $TAG (source: $REPO)"
-      info "What changed: https://github.com/$REPO/releases/tag/$TAG"
-      info ""
       info "Target: $MAC_APP"
-      printf 'Replace the app with version %s? [Enter = yes] ' "$TAG"
-      read -r answer
-      case "$answer" in [Nn]*) info "cancelled; nothing changed."; exit 0 ;; esac
-      install_macos
     fi
+    if [ -n "$YES" ]; then choice="update"; else choice="$(ask_choice "$TAG")"; fi
+    case "$choice" in
+      update)
+        if [ "$OS" = "Darwin" ] && [ -z "$YES" ] && \
+           pgrep -f "Prism Launcher.app/Contents/MacOS" >/dev/null 2>&1; then
+          info "  Prism Launcher is running. Close it, then press Enter (Ctrl+C to abort)."
+          read -r dummy || true
+        fi
+        if [ "$OS" = "Linux" ]; then install_linux; else install_macos; fi ;;
+      ignore)
+        if [ -f "$MPATH" ]; then
+          write_ignore "$MPATH"
+          info "  $TAG will not be suggested again (a newer version still asks;"
+          info "  'apply --yes' installs it anyway)."
+          add_log "update $TAG ignored (user choice)"
+        else
+          info "  nothing was changed."
+        fi ;;
+      *) info "cancelled; nothing changed." ;;
+    esac
     ;;
 
   auto)
@@ -491,6 +604,12 @@ case "$MODE" in
     if [ "$INTACT" = "yes" ] && [ "$(compare_tags "$INSTALLED" "$TAG")" != "-1" ]; then
       exit 0   # current; the scheduled run ends here without a peep
     fi
+    if [ "$(marker_field ignored "$MPATH" || true)" = "$TAG" ]; then
+      # the user said no to exactly this version; the scheduled run stays
+      # silent until a NEWER release asks
+      add_log "update $TAG skipped: it is the version you chose to ignore (apply --yes installs it anyway)"
+      exit 0
+    fi
     if [ "$OS" = "Darwin" ] && pgrep -f "Prism Launcher.app/Contents/MacOS" >/dev/null 2>&1; then
       notify "Update to $TAG is ready - close Prism, then run the update script"
       add_log "update $TAG deferred: the launcher was running"
@@ -517,11 +636,13 @@ case "$MODE" in
     INSTALLED="$(marker_field tag "$MPATH" || true)"
     info "Latest release:     $TAG"
     if [ -n "$INSTALLED" ]; then info "Installed:          $INSTALLED (marker)"; else info "Installed:          unknown (no marker)"; fi
+    IGN="$(marker_field ignored "$MPATH" || true)"
+    if [ -n "$IGN" ]; then info "Ignored version:    $IGN"; fi
     if [ "$OS" = "Linux" ]; then
       ST="$(systemctl --user is-enabled prism-patch-update.timer 2>/dev/null || true)"
       info "Background timer:   ${ST:-not installed}"
     else
-      info "Background timer:   planned (not yet on macOS)"
+      info "Background timer:   not yet on macOS"
     fi
     info "Log:                $LOGFILE"
     ;;

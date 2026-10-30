@@ -241,7 +241,11 @@ first (the folder's Qt runtime files move with it) - so on a jump it says
 so, waits, and re-applies the patch on its own once the official update has
 run. The wrappers:
 
-- `update-prism.cmd` - update now, interactively.
+- `update-prism.cmd` - update now, interactively. When a new build is out,
+  it asks with three choices: **Update**, **Cancel** (nothing happens until
+  the next check), or **Ignore this update** (that exact version stops being
+  suggested; the next release asks again. `update-patcher.ps1 apply -Yes`
+  installs an ignored version anyway, without questions).
 - `update-check-enable.cmd` - optional: a daily background check (a per-user
   scheduled task; no admin rights). It updates silently when the launcher is
   closed and only notifies you when a swap has to wait for you.
@@ -254,13 +258,24 @@ run `bash update-patcher.sh`. Same deal - checksum, backup, swap in place -
 and the file name never changes, so menu entries and Steam shortcuts keep
 working. The swap is safe even while the launcher is running; the new
 version starts at the next launch. `enable-check` / `disable-check` turn a
-daily systemd user timer on and off.
+daily systemd user timer on and off. The update question is the same three
+choices (Update / Cancel / Ignore this update), as a small dialog where a
+desktop is present and in the terminal otherwise.
 
 **macOS:** the same script - `bash update-patcher.sh` - mounts the new DMG,
 verifies it, and swaps the app. The DMG was fetched by the script itself,
 which leaves no quarantine mark, so Gatekeeper should not ask again. The
-background check is not wired up on macOS yet (planned for a coming kit);
+update question is the same three choices (Update / Cancel / Ignore this
+update), as a dialog. The background check is not wired up on macOS yet;
 the manual route works today.
+
+Wherever the helper asks, the question has the same three answers: Update,
+Cancel, and Ignore this update. Ignoring records the exact version beside
+the install (the `.update-patcher.json` marker's `ignored` field); the
+daily background check then stays silent about that version, and the next
+patched release asks normally again. Installing a version clears an ignore
+of that same version. `apply -Yes` (Windows) or `apply --yes` (Linux and
+macOS) skips every question and installs even an ignored version.
 
 The helper keeps its own record next to the install (`.update-patcher.json`)
 and a log in your profile folder (`%LocalAppData%\PrismPatcher` on Windows,

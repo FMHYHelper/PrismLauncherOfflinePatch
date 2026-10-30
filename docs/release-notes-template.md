@@ -30,10 +30,13 @@ Releases also carry a small update helper - plain scripts named `update-*`
 on Linux and macOS). Download them from this page and run the matching one:
 it fetches the newest patched build from this repository, verifies it
 against `checksums.txt`, backs the old file up, and swaps the new one in.
-Optional, run by hand, and never part of the launcher - the launcher itself
-stays exactly the four patches. A daily background check can be turned on
-on Windows and Linux; on macOS that is not wired up yet (coming with a
-later kit), so there the helper updates when you run it.
+When it asks, you get three choices: Update, Cancel (nothing happens until
+the next check), and Ignore this update - an ignored version stops being
+suggested until a newer one appears; `--yes` (or `-Yes` on Windows) installs
+it anyway without questions. Optional, run by hand, and never part of the
+launcher - the launcher itself stays exactly the four patches. A daily
+background check can be turned on on Windows and Linux; on macOS that is
+not wired up yet, so there the helper updates when you run it.
 
 ## Install
 

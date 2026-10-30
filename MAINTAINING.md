@@ -469,3 +469,41 @@ was always a manual paste.
 - sync-kit's `$kitPaths` now carries `updater/`, and .gitattributes pins
   `*.cmd text eol=crlf` - cmd.exe parses the wrappers correctly only with
   CRLF endings, while the PowerShell and bash sides stay LF.
+
+### Update, Cancel, Ignore this update: the helper asks with three answers (kit 22)
+
+Kit 22 replaces the helper's one yes/no question with a three-way choice,
+the same on every platform: **Update** (fetch, verify, swap), **Cancel**
+(do nothing until the next check), and **Ignore this update** (record the
+exact version so it stops being suggested; the next patched release asks
+normally again).
+
+- The question is a small windowed dialog on Windows (WinForms), an
+  osascript dialog on macOS, a zenity list on Linux where present - with
+  the plain terminal as fallback everywhere. Where no question can be
+  asked at all (redirected input, a service session, the CI variable set),
+  the answer is Cancel. The prompt is the one place the helper must never
+  hang or guess: the fallback order is dialog, terminal, cancel.
+- Ignore lives on the marker (`ignored`: the tag, plus an `ignored_at`
+  timestamp). The scheduled run then logs the skip and stays silent; `check`
+  and `status` show the ignored version; `apply` says the version is the
+  one that was ignored and names the way past it. The `-Yes` / `--yes`
+  flag - declared but unwired in kit 21 - is now that way: skip the
+  questions and install even an ignored version.
+- Equality only: ignoring 11.2.0 never mutes a later 11.3.0. Installing a
+  version clears an ignore of that same version and carries an ignore of
+  an older one forward onto the new marker.
+- The engines differ on timing on purpose: Windows asks after the download
+  and verify (the choice sits inside the existing interactive path), while
+  Linux and macOS ask before any download (a declined update costs
+  nothing). Both ask only in `apply`; the scheduled `auto` run never
+  prompts, so CI and timers stay hang-proof.
+- Self-test stages 8-10: auto skips an ignored version and changes
+  nothing; apply with -Yes installs it anyway and clears the record; apply
+  with no way to ask answers Cancel by itself - exit 0, nothing changed.
+  Stage 10 is the no-hang guarantee, run on every build from now on.
+- The GUI dialogs themselves stay untested in CI (no display there); what
+  CI proves is that every non-interactive route lands on Cancel. The
+  macOS background check is still deferred - launchd remains unprovable
+  from here - and the kit-22 text changes only retire the "next kit"
+  promise the old enable-check lines used to make.

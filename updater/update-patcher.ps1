@@ -9,7 +9,9 @@
 # it against checksums.txt, back the old file up, and swap it in.
 #
 # Modes:
-#   apply          interactive update (the default; run by update-prism.cmd)
+#   apply          interactive update (the default; run by update-prism.cmd);
+#                  asks Update / Cancel / Ignore this update; -Yes skips the
+#                  questions and installs even an ignored version
 #   auto           non-interactive: update when needed, silent when current
 #                  (the mode the optional background task runs)
 #   check          report only: installed version vs. latest release
@@ -22,7 +24,9 @@
 # GitHub API and download servers of that one repository.
 #
 # Files:
-#   .update-patcher.json  - marker written next to the installed exe
+#   .update-patcher.json  - marker written next to the installed exe; its
+#                           ignored field records a version the user chose
+#                           to skip (a newer release asks again)
 #   *.bak-<timestamp>     - backups; they accumulate, delete old ones by hand
 #
 # Runs on Windows PowerShell 5.1 and pwsh.
@@ -155,6 +159,71 @@ function Test-LauncherRunning {
     return [bool](Get-Process -Name 'prismlauncher' -ErrorAction SilentlyContinue)
 }
 
+function Get-UpdateChoice([string]$Title, [string]$Message) {
+    # The interactive question with three answers:
+    #   update - fetch, verify and swap now
+    #   cancel - do nothing until the next check
+    #   ignore - record this exact version so it stops being suggested
+    #            (a newer version asks again)
+    # A windowed dialog first, the terminal as fallback, and "cancel" - the
+    # answer that changes nothing - whenever no question can be asked at
+    # all (redirected input, a service session, the self-test's CI
+    # runners). Never hangs.
+    try {
+        if ($env:CI -or [Console]::IsInputRedirected -or -not [Environment]::UserInteractive) { return 'cancel' }
+    }
+    catch { return 'cancel' }
+    try {
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = $Title
+        $form.ClientSize = New-Object System.Drawing.Size(430, 108)
+        $form.StartPosition = 'CenterScreen'
+        $form.FormBorderStyle = 'FixedDialog'
+        $form.MaximizeBox = $false
+        $form.TopMost = $true
+        $label = New-Object System.Windows.Forms.Label
+        $label.Text = $Message
+        $label.Location = New-Object System.Drawing.Point(12, 12)
+        $label.Size = New-Object System.Drawing.Size(406, 42)
+        $form.Controls.Add($label)
+        $bUpdate = New-Object System.Windows.Forms.Button
+        $bUpdate.Text = 'Update'
+        $bUpdate.Location = New-Object System.Drawing.Point(12, 66)
+        $bUpdate.Size = New-Object System.Drawing.Size(132, 30)
+        $bUpdate.DialogResult = [System.Windows.Forms.DialogResult]::Yes
+        $form.Controls.Add($bUpdate)
+        $bCancel = New-Object System.Windows.Forms.Button
+        $bCancel.Text = 'Cancel'
+        $bCancel.Location = New-Object System.Drawing.Point(150, 66)
+        $bCancel.Size = New-Object System.Drawing.Size(132, 30)
+        $bCancel.DialogResult = [System.Windows.Forms.DialogResult]::No
+        $form.Controls.Add($bCancel)
+        $bIgnore = New-Object System.Windows.Forms.Button
+        $bIgnore.Text = 'Ignore this update'
+        $bIgnore.Location = New-Object System.Drawing.Point(288, 66)
+        $bIgnore.Size = New-Object System.Drawing.Size(130, 30)
+        $bIgnore.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+        $form.Controls.Add($bIgnore)
+        $form.AcceptButton = $bUpdate
+        $form.CancelButton = $bCancel
+        $r = $form.ShowDialog()
+        if ($r -eq [System.Windows.Forms.DialogResult]::Yes) { return 'update' }
+        if ($r -eq [System.Windows.Forms.DialogResult]::Cancel) { return 'ignore' }
+        return 'cancel'
+    }
+    catch {
+        try {
+            $answer = Read-Host ("  " + $Message + " [Enter = update, i = ignore this update, anything else = cancel]")
+            if ($answer -match '^(i|ign)') { return 'ignore' }
+            if ($answer -match '^(n|no|c|ca)') { return 'cancel' }
+            return 'update'
+        }
+        catch { return 'cancel' }
+    }
+}
+
 function Read-Marker([string]$DirPath) {
     $p = Join-Path $DirPath $MarkerName
     if (-not (Test-Path -LiteralPath $p)) { return $null }
@@ -166,6 +235,19 @@ function Write-Marker([string]$DirPath, [hashtable]$M) {
     $p = Join-Path $DirPath $MarkerName
     $json = $M | ConvertTo-Json -Compress
     [IO.File]::WriteAllText($p, $json + "`n", (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Add-IgnoreMarker([string]$DirPath, [string]$IgnoredTag) {
+    # Records "the user chose to skip this exact version" on the marker,
+    # keeping every field it already carries.
+    $rec = @{ helper = 'kit-22' }
+    $m = Read-Marker $DirPath
+    if ($m) {
+        foreach ($p in $m.PSObject.Properties) { $rec[$p.Name] = $p.Value }
+    }
+    $rec['ignored'] = $IgnoredTag
+    $rec['ignored_at'] = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    Write-Marker $DirPath $rec
 }
 
 function Resolve-InstallDir {
@@ -207,9 +289,9 @@ function Get-InstalledState([string]$DirPath) {
     $currentSha = Get-FileSha $exePath
     if ($marker) {
         $intact = ($marker.sha256 -eq $currentSha)
-        return @{ tag = [string]$marker.tag; intact = $intact; via = 'marker' }
+        return @{ tag = [string]$marker.tag; intact = $intact; via = 'marker'; ignored = [string]$marker.ignored }
     }
-    return @{ tag = (Get-NativeVersion $DirPath); intact = $false; via = 'file properties' }
+    return @{ tag = (Get-NativeVersion $DirPath); intact = $false; via = 'file properties'; ignored = '' }
 }
 
 function Get-DisplayRef($st, [string]$DirPath) {
@@ -303,10 +385,18 @@ function Invoke-Update([hashtable]$Release, [string]$DirPath, [bool]$NonInteract
         else {
             if (Test-LauncherRunning) {
                 Info "  Prism Launcher is running. Close it, then press Enter (Ctrl+C to abort)."
-                Read-Host "  ready when the launcher is closed" | Out-Null
+                try { [void](Read-Host "  ready when the launcher is closed") }
+                catch { Info "  cancelled; nothing changed."; return 'cancelled' }
             }
-            $answer = Read-Host ("  replace " + $InstalledName + " with " + $Release.tag + "? [Enter = yes]")
-            if ($answer -match '^(n|no)' ) { Info "  cancelled; nothing changed."; return 'cancelled' }
+            $choice = Get-UpdateChoice 'Prism Launcher (patched)' ("Install " + $Release.tag + " now? The current file is backed up first.")
+            if ($choice -eq 'ignore') {
+                Add-IgnoreMarker $DirPath $Release.tag
+                Info ("  " + $Release.tag + " is noted as ignored - it will not be suggested again")
+                Info "  (a newer version still asks; 'apply -Yes' installs it anyway)."
+                Add-Log ("update " + $Release.tag + " ignored (user choice)")
+                return 'ignored'
+            }
+            if ($choice -ne 'update') { Info "  cancelled; nothing changed."; return 'cancelled' }
         }
 
         $backup = Backup-Path $DirPath
@@ -315,14 +405,21 @@ function Invoke-Update([hashtable]$Release, [string]$DirPath, [bool]$NonInteract
         $placed = Get-FileSha $exePath
         if ($placed -ne $expected) { Die "the swapped file does not match the verified checksum - inspect $DirPath" }
 
-        Write-Marker $DirPath @{
+        $wm = @{
             tag          = $Release.tag
             asset        = $AssetName
             sha256       = $placed
             repo         = $Repo
             installed_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-            helper       = 'kit-21'
+            helper       = 'kit-22'
         }
+        # an ignore of an OLDER version carries forward; installing the
+        # ignored version itself is what clears it
+        $oldMarker = Read-Marker $DirPath
+        if ($oldMarker -and $oldMarker.ignored -and ([string]$oldMarker.ignored -ne $Release.tag)) {
+            $wm['ignored'] = [string]$oldMarker.ignored
+        }
+        Write-Marker $DirPath $wm
         Info ("  old exe kept as " + (Split-Path $backup -Leaf))
         Info ("  done - the patched launcher is now " + $Release.tag + ". Start it and check the account picker works.")
         Add-Log ("updated to " + $Release.tag)
@@ -360,7 +457,8 @@ function Enable-Check {
     Add-Log "background check enabled (daily 12:00, catch-up when the machine was off)"
     Info ("Background check is on: a hidden daily task '" + $TaskName + "' runs at 12:00 and")
     Info "catches up after a missed slot. It updates silently when the launcher is closed,"
-    Info "and only notifies when a swap must wait for you. Everything it does lands in"
+    Info "stays silent about a version you chose to ignore, and only notifies when a"
+    Info "swap must wait for you. Everything it does lands in"
     Info ("  " + $BkLog)
     Info "Remove it anytime with update-check-disable.cmd."
 }
@@ -399,7 +497,12 @@ switch ($Mode) {
         Info ("Installed here:          " + $(if ($st.tag) { $st.tag + " (" + $st.via + ")" } else { 'unknown' }))
         if (-not $st.intact -and $st.via -eq 'marker') { Warn "the exe no longer matches what the helper installed (official update ran?)" }
         if ((Compare-PrismTags $st.tag $release.tag) -lt 0) {
-            Info "An update is available - run update-prism.cmd to apply it."
+            if ($st.ignored -eq $release.tag) {
+                Info ("The available update (" + $release.tag + ") is the one you chose to ignore;")
+                Info "'update-patcher.ps1 apply -Yes' installs it anyway."
+            } else {
+                Info "An update is available - run update-prism.cmd to apply it."
+            }
         } else {
             Info "This install is up to date."
         }
@@ -410,6 +513,7 @@ switch ($Mode) {
         Info ("Source repository:  " + $Repo)
         Info ("Latest release:     " + $release.tag)
         Info ("Installed:          " + $(if ($st.tag) { $st.tag + " (" + $st.via + ", intact: " + $st.intact + ")" } else { 'unknown' }))
+        if ($st.ignored) { Info ("Ignored version:    " + $st.ignored) }
         Info ("Background task:    " + (Get-TaskState))
         if (Test-Path -LiteralPath $BkLog) { Info ("Log:                " + $BkLog) }
     }
@@ -435,20 +539,28 @@ switch ($Mode) {
             Info "updated folder on its own."
         }
         else {
-            if (-not $st.intact -and $st.via -eq 'marker') {
-                Warn "the exe is not the one the helper installed - an official update or a manual"
-                Warn "replace ran in between. Applying the newest patched build on top is the fix;"
-                Info "the current file gets a backup first."
+            if ($st.ignored -eq $release.tag -and -not $Yes) {
+                Info ("You chose to ignore " + $release.tag + ", so the helper does not suggest it again.")
+                Info "The next patched release will ask normally. To install this one anyway:"
+                Info "  update-patcher.ps1 apply -Yes"
+                Info "Nothing was changed."
             }
-            Info ""
-            Info ("What changed in " + $release.tag + ":")
-            if ($release.body) {
-                $release.body -split "`n" | Select-Object -First 40 | ForEach-Object { Info ("  " + $_) }
-            } else {
-                Info ("  see the release page: https://github.com/" + $Repo + "/releases")
+            else {
+                if (-not $st.intact -and $st.via -eq 'marker') {
+                    Warn "the exe is not the one the helper installed - an official update or a manual"
+                    Warn "replace ran in between. Applying the newest patched build on top is the fix;"
+                    Info "the current file gets a backup first."
+                }
+                Info ""
+                Info ("What changed in " + $release.tag + ":")
+                if ($release.body) {
+                    $release.body -split "`n" | Select-Object -First 40 | ForEach-Object { Info ("  " + $_) }
+                } else {
+                    Info ("  see the release page: https://github.com/" + $Repo + "/releases")
+                }
+                Info ""
+                $null = Invoke-Update $release $dir $Yes
             }
-            Info ""
-            $null = Invoke-Update $release $dir $false
         }
     }
     'auto' {
@@ -468,6 +580,11 @@ switch ($Mode) {
         elseif ($action -eq 'wait-jump') {
             Add-Log ("version jump to " + $release.tag + " needs the official update first; waiting")
             Show-Toast 'Prism Launcher (patched)' ("Prism " + $release.tag + " needs the official update first - then run update-prism.cmd")
+        }
+        elseif ($st.ignored -eq $release.tag) {
+            # the user said no to exactly this version; the scheduled run
+            # stays silent until a NEWER release asks
+            Add-Log ("update " + $release.tag + " skipped: it is the version you chose to ignore (apply -Yes installs it anyway)")
         }
         else {
             if (-not $st.intact -and $st.via -eq 'marker') {

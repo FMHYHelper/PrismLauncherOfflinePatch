@@ -12,7 +12,14 @@
 #   4. asserts: exit 0, marker updated, backup made, checksum verified,
 #   5. runs it again: "current" must stay silent and touch nothing,
 #   6. tampers with checksums.txt: the helper must refuse and change nothing,
-#   7. on Windows and Linux, turns the optional background check on and off.
+#   7. on Windows and Linux, turns the optional background check on and off
+#      (macOS has none yet - there the script must decline politely),
+#   8. marks the release ignored: auto must skip it silently, changing
+#      nothing,
+#   9. apply with -Yes / --yes installs an ignored version anyway and
+#      clears the ignore record again,
+#   10. apply with no way to ask (CI stdin) must answer "cancel" by itself:
+#       exit 0, nothing changed - the no-hang guarantee.
 #
 # A red self-test keeps the release from publishing (the publish job waits
 # on this one). Exit code 0 = all checks passed.
@@ -123,19 +130,23 @@ try {
     }
 
     # ---- 3. the helper invocation -------------------------------------------
-    function Invoke-Helper([string]$Mode, [string]$SourceOverride) {
+    function Invoke-Helper([string]$Mode, [string]$SourceOverride, [switch]$Yes) {
         $src = $SourceOverride
         if (-not $src) { $src = $SourceDir }
+        $yesArgs = @()
+        if ($Yes) {
+            if ($Platform -eq 'windows') { $yesArgs = @('-Yes') } else { $yesArgs = @('--yes') }
+        }
         if ($Platform -eq 'windows') {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $helperPs1 $Mode `
+            & powershell -NoProfile -ExecutionPolicy Bypass -File $helperPs1 $Mode @yesArgs `
                 -Repo $Repo -SourceDir $src -Dir (Join-Path $root 'install')
             return $LASTEXITCODE
         }
         if ($Platform -eq 'linux') {
-            & bash $helperSh $Mode --repo $Repo --source-dir $src --dir (Join-Path $root 'install')
+            & bash $helperSh $Mode @yesArgs --repo $Repo --source-dir $src --dir (Join-Path $root 'install')
             return $LASTEXITCODE
         }
-        & bash $helperSh $Mode --repo $Repo --source-dir $src --app (Join-Path $root 'apps/Prism Launcher.app')
+        & bash $helperSh $Mode @yesArgs --repo $Repo --source-dir $src --app (Join-Path $root 'apps/Prism Launcher.app')
         return $LASTEXITCODE
     }
 
@@ -216,7 +227,7 @@ try {
         Check "tamper changed nothing" ((Get-Sha (Join-Path $root 'install/' + $installedName)) -eq $assetSha)
     }
 
-    # ---- 7. background check on/off (Windows + Linux; macOS: kit-22) -----------
+    # ---- 7. background check on/off (Windows + Linux; macOS has none) -----------
     if ($Platform -eq 'windows') {
         $rc4 = Invoke-Helper 'enable-check' ''
         Check "enable-check exits 0" ($rc4 -eq 0)
@@ -246,8 +257,76 @@ try {
         }
     }
     else {
-        $out = Invoke-Helper 'enable-check' ''
-        Check "macOS enable-check declines politely (kit-22)" ($LASTEXITCODE -eq 0)
+        $null = Invoke-Helper 'enable-check' ''
+        Check "macOS enable-check declines politely" ($LASTEXITCODE -eq 0)
+    }
+
+    # ---- 8. an ignored version: auto must skip it silently ----------------------
+    $mp = Join-Path $root 'install/.update-patcher.json'
+    if ($Platform -eq 'macos') {
+        $mp = Join-Path $root 'apps/.update-patcher.json'
+        [IO.File]::WriteAllText($mp,
+            ('{"tag":"' + $oldTag + '","asset":"' + $assetName + '","sha256":"na","repo":"' + $Repo +
+             '","target":"' + (Join-Path $root 'apps/Prism Launcher.app') + '","installed_at":"now","helper":"selftest","ignored":"' + $Tag + '"}'))
+    }
+    else {
+        [IO.File]::WriteAllText($mp,
+            ('{"tag":"' + $oldTag + '","asset":"' + $assetName + '","sha256":"' + $assetSha +
+             '","repo":"' + $Repo + '","installed_at":"now","helper":"selftest","ignored":"' + $Tag + '"}'))
+    }
+    $rc6 = Invoke-Helper 'auto' ''
+    Check "auto on an ignored version exits 0" ($rc6 -eq 0)
+    $markerNow = Get-Content $mp -Raw
+    Check "ignored version was not installed" ($markerNow -match ('"tag":"' + [regex]::Escape($oldTag) + '"'))
+    Check "the ignore is still recorded" ($markerNow -match ('"ignored":"' + [regex]::Escape($Tag) + '"'))
+
+    # ---- 9. apply -Yes / --yes installs an ignored version anyway ----------------
+    $rc7 = Invoke-Helper 'apply' '' -Yes
+    Check "apply with -Yes/--yes exits 0 on an ignored version" ($rc7 -eq 0)
+    $markerNow = Get-Content $mp -Raw
+    Check "apply -Yes installed the ignored version" ($markerNow -match ('"tag":"' + [regex]::Escape($Tag) + '"'))
+    Check "installing it cleared the ignore" ($markerNow -notmatch '"ignored"')
+    if ($Platform -eq 'windows') {
+        Check "installed sha matches the verified asset" ((Get-Sha (Join-Path $root 'install/prismlauncher.exe')) -eq $assetSha)
+        $backups = @(Get-ChildItem (Join-Path $root 'install') -Filter 'prismlauncher.exe.bak-*')
+        Check "a second backup was made" ($backups.Count -eq 2)
+    }
+    elseif ($Platform -eq 'linux') {
+        Check "installed sha matches the verified asset" ((Get-Sha (Join-Path $root 'install/' + $installedName)) -eq $assetSha)
+        $backups = @(Get-ChildItem (Join-Path $root 'install') -Filter '*.AppImage.bak-*')
+        Check "a second backup was made" ($backups.Count -eq 2)
+    }
+    else {
+        $plistVer3 = & defaults read (Join-Path $root 'apps/Prism Launcher.app/Contents/Info') CFBundleShortVersionString
+        Check "app is still $Tag" ("$plistVer3".Trim() -eq $Tag)
+        $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name -like 'Prism Launcher (backup *)' })
+        Check "a second backup was made" ($backups.Count -eq 2)
+    }
+
+    # ---- 10. apply with no way to ask must cancel safely (no hang) ---------------
+    # CI stdin is redirected and $CI is set, so the helper cannot prompt -
+    # both engines must answer "cancel" by themselves: exit 0, unchanged.
+    if ($Platform -eq 'macos') {
+        [IO.File]::WriteAllText($mp,
+            ('{"tag":"' + $oldTag + '","asset":"' + $assetName + '","sha256":"na","repo":"' + $Repo +
+             '","target":"' + (Join-Path $root 'apps/Prism Launcher.app') + '","installed_at":"now","helper":"selftest"}'))
+    }
+    else {
+        [IO.File]::WriteAllText($mp,
+            ('{"tag":"' + $oldTag + '","asset":"' + $assetName + '","sha256":"' + $assetSha +
+             '","repo":"' + $Repo + '","installed_at":"now","helper":"selftest"}'))
+    }
+    $rc8 = Invoke-Helper 'apply' ''
+    Check "apply without a terminal cancels safely (exit 0)" ($rc8 -eq 0)
+    $markerNow = Get-Content $mp -Raw
+    Check "apply without a terminal changed nothing" ($markerNow -match ('"tag":"' + [regex]::Escape($oldTag) + '"'))
+    if ($Platform -eq 'macos') {
+        $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name -like 'Prism Launcher (backup *)' })
+        Check "no extra backup from the cancelled apply" ($backups.Count -eq 2)
+    }
+    else {
+        $backups = @(Get-ChildItem (Join-Path $root 'install') -Filter '*.bak-*')
+        Check "no extra backup from the cancelled apply" ($backups.Count -eq 2)
     }
 
     Write-Output ""
