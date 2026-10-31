@@ -507,3 +507,28 @@ normally again).
   macOS background check is still deferred - launchd remains unprovable
   from here - and the kit-22 text changes only retire the "next kit"
   promise the old enable-check lines used to make.
+
+### The self-test's helper capture leaked output into its exit code (kit 23)
+
+The updater-selftest's `Invoke-Helper` returned the helper's whole stdout
+alongside the exit code - in PowerShell, everything a function's body
+writes to the pipeline rides in the return value unless captured. The
+first CI exercise (run #32, 2026-10-31, kit 22's tag 11.1.1 rebuild) died
+on all three platforms with "Cannot convert System.Object[] to
+System.Boolean" at the very first exit-code check, before a single stage
+could assert anything. The helper itself was never at fault; the bug
+lived in the test harness kit 21 introduced, and no run had ever executed
+it before (the daily no-binaries runs skip the self-test by design, and
+run #30 was lost to a runner-acquisition outage).
+
+- `Invoke-Helper` now captures the helper's output and echoes it into the
+  job log indented (one "helper|" line per line), so a red stage explains
+  itself in the run's own log, and returns only the integer exit code.
+  The capture runs under a local ErrorActionPreference of Continue - the
+  same native-stderr discipline the helper itself follows.
+- Audited in the same pass: every other exit-code comparison in the
+  self-test reads either the now-integer returns or `$LASTEXITCODE`
+  directly; no other function mixes pipeline output with a return value.
+- No shipped file changed: the helper engines, wrappers, and publish
+  staging are untouched from kit 22. Only the self-test script, this
+  section, and KIT-VERSION move.

@@ -130,6 +130,11 @@ try {
     }
 
     # ---- 3. the helper invocation -------------------------------------------
+    # Returns ONLY the helper's exit code. The helper's own output is captured
+    # and echoed into the log indented, so a red stage explains itself; the
+    # capture also keeps stdout from riding along in the return value, which
+    # would turn the exit-code comparisons into array-vs-bool errors (run #32
+    # died on every platform exactly there, before a single stage could pass).
     function Invoke-Helper([string]$Mode, [string]$SourceOverride, [switch]$Yes) {
         $src = $SourceOverride
         if (-not $src) { $src = $SourceDir }
@@ -137,17 +142,24 @@ try {
         if ($Yes) {
             if ($Platform -eq 'windows') { $yesArgs = @('-Yes') } else { $yesArgs = @('--yes') }
         }
-        if ($Platform -eq 'windows') {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $helperPs1 $Mode @yesArgs `
-                -Repo $Repo -SourceDir $src -Dir (Join-Path $root 'install')
-            return $LASTEXITCODE
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'   # native stderr must not stop us (5.1 trap)
+        try {
+            if ($Platform -eq 'windows') {
+                $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $helperPs1 $Mode @yesArgs `
+                    -Repo $Repo -SourceDir $src -Dir (Join-Path $root 'install') 2>&1
+            }
+            elseif ($Platform -eq 'linux') {
+                $out = & bash $helperSh $Mode @yesArgs --repo $Repo --source-dir $src --dir (Join-Path $root 'install') 2>&1
+            }
+            else {
+                $out = & bash $helperSh $Mode @yesArgs --repo $Repo --source-dir $src --app (Join-Path $root 'apps/Prism Launcher.app') 2>&1
+            }
         }
-        if ($Platform -eq 'linux') {
-            & bash $helperSh $Mode @yesArgs --repo $Repo --source-dir $src --dir (Join-Path $root 'install')
-            return $LASTEXITCODE
-        }
-        & bash $helperSh $Mode @yesArgs --repo $Repo --source-dir $src --app (Join-Path $root 'apps/Prism Launcher.app')
-        return $LASTEXITCODE
+        finally { $ErrorActionPreference = $prevEap }
+        $code = $LASTEXITCODE
+        foreach ($l in @($out)) { Write-Output ("    helper| " + ($l | Out-String).TrimEnd()) }
+        return $code
     }
 
     # ---- 4. the update itself -------------------------------------------------
