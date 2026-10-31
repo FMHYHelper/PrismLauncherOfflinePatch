@@ -593,7 +593,7 @@ case "$MODE" in
       if [ "$OS" = "Darwin" ]; then
         NATIVE="$CURVER"
       else
-        NATIVE="$(timeout 15 "$TARGET" --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)*' | head -n 1 || true)"
+        NATIVE="$(timeout 15 "$TARGET" --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)*' | head -n 1 | cut -d. -f1-3 || true)"
       fi
       if [ -n "$NATIVE" ] && [ "$(compare_tags "$NATIVE" "$TAG")" = "1" ]; then
         add_log "official $NATIVE is newer than the newest patched build ($TAG); waiting"

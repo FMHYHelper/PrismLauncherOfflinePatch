@@ -306,11 +306,17 @@ function Get-DisplayRef($st, [string]$DirPath) {
 
 function Get-NativeVersion([string]$DirPath) {
     # The exe's own version string (works even after an official update
-    # replaced the file and the marker no longer matches).
+    # replaced the file and the marker no longer matches). Windows version
+    # resources carry a fourth field ("11.1.1.0" upstream); the tag compares
+    # work on three-field tags, so a fourth field reads as a newer build and
+    # makes the helper wait for the official update about itself (run #33).
+    # Trim to the first three fields.
     $exePath = Join-Path $DirPath $InstalledName
     $vi = (Get-Item -LiteralPath $exePath).VersionInfo
     $ver = [string]$vi.ProductVersion
     if (-not $ver) { $ver = [string]$vi.FileVersion }
+    $parts = $ver -split '\.'
+    if ($parts.Count -gt 3) { $ver = ($parts[0..2]) -join '.' }
     return $ver
 }
 

@@ -532,3 +532,36 @@ run #30 was lost to a runner-acquisition outage).
 - No shipped file changed: the helper engines, wrappers, and publish
   staging are untouched from kit 22. Only the self-test script, this
   section, and KIT-VERSION move.
+
+### The helper waited on itself, and the log echo leaked again (kit 24)
+
+Run #33 (2026-10-31, kit 23) was the first self-test to reach real stages
+on every platform: all three builds were green, Windows even proved
+stages 4 and 5, and macOS finally got a runner after run #30's outage.
+It also failed all three self-tests, and the logs named two separate
+causes. Both are fixed here.
+
+- The kit-23 log echo had the disease it was written to cure: it echoed
+  the helper's output with Write-Output from inside Invoke-Helper, so the
+  log lines rode in the return value and $rc became an array again - the
+  same "Object[] to Boolean" crash as run #32, this time on all three
+  platforms. The echo now uses Write-Host, the only in-function print
+  that cannot travel in a return value.
+- The Windows-only no-op: a Windows version resource carries a fourth
+  field. Upstream 11.1.1 sets Launcher_VERSION_NAME4 to "11.1.1.0", so
+  the built exe reports 11.1.1.0. Get-NativeVersion returned that whole
+  string, the tag compare read it as a newer build than the release tag
+  11.1.1, and the helper chose wait-newer-official: silent, exit 0, no
+  marker update, no backup - exactly the stage-4 pattern in the run #33
+  Windows log (the second run then passed because nothing had changed).
+  Get-NativeVersion now trims to the first three fields. Waiting is the
+  right move for a genuinely newer official install; "11.1.1.0" is the
+  same release as "11.1.1" with a resource-format detail appended.
+- The same trim is applied in the Linux/macOS engine's --version parse
+  (cut -d. -f1-3) for symmetry, though its builds report three fields
+  today.
+- The self-test now prints the staged exe's ProductVersion as a "diag|"
+  line on Windows before the first update run, so a silent wait explains
+  itself in any future log.
+- Moved: both engines' native-version read, the self-test's log echo,
+  this section, and KIT-VERSION.

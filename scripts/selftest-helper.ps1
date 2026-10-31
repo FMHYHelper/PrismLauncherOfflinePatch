@@ -135,6 +135,9 @@ try {
     # capture also keeps stdout from riding along in the return value, which
     # would turn the exit-code comparisons into array-vs-bool errors (run #32
     # died on every platform exactly there, before a single stage could pass).
+    # The echo itself must be Write-Host, never Write-Output: a function's own
+    # Write-Output rides in the return value just the same (run #33, kit 23's
+    # echo put the log lines back inside $rc and every platform died again).
     function Invoke-Helper([string]$Mode, [string]$SourceOverride, [switch]$Yes) {
         $src = $SourceOverride
         if (-not $src) { $src = $SourceDir }
@@ -158,11 +161,18 @@ try {
         }
         finally { $ErrorActionPreference = $prevEap }
         $code = $LASTEXITCODE
-        foreach ($l in @($out)) { Write-Output ("    helper| " + ($l | Out-String).TrimEnd()) }
+        foreach ($l in @($out)) { Write-Host ("    helper| " + ($l | Out-String).TrimEnd()) }
         return $code
     }
 
     # ---- 4. the update itself -------------------------------------------------
+    if ($Platform -eq 'windows') {
+        # The exe's own version resource goes into the log: a silent
+        # wait-newer-official on a fresh build is unexplainable without it
+        # (run #33: the exe reported "11.1.1.0", read as newer than "11.1.1").
+        $stagedExe = Join-Path $root 'install/prismlauncher.exe'
+        Write-Host ("    diag| staged exe ProductVersion: " + (Get-Item -LiteralPath $stagedExe).VersionInfo.ProductVersion)
+    }
     $rc = Invoke-Helper 'auto' ''
     Check "update run exits 0" ($rc -eq 0)
     if ($Platform -eq 'windows') {
