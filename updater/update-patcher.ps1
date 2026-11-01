@@ -51,8 +51,13 @@ $BkLog         = Join-Path $StableDir 'update-check.log'
 
 # ---------------------------------------------------------------- helpers ----
 
-function Info([string]$m) { Write-Host $m }
-function Warn([string]$m) { Write-Host ("  note: " + $m) }
+# Info and Warn write straight to the process stdout. Write-Host rides the
+# console host and did not survive every capture chain (run #34: the helper
+# ran silent under CI's pwsh 7 -> Windows PowerShell 5.1 redirected pipes).
+# The hidden scheduled task prints to nowhere either way; a captured run
+# sees every line.
+function Info([string]$m) { try { [Console]::Out.WriteLine($m) } catch { } }
+function Warn([string]$m) { try { [Console]::Out.WriteLine("  note: " + $m) } catch { } }
 function Die([string]$m)  { throw $m }
 
 function Get-FileSha([string]$Path) {
@@ -577,6 +582,11 @@ switch ($Mode) {
         $dir = Resolve-InstallDir
         $st = Get-InstalledState $dir
         $action = Resolve-Action $release $st $dir
+        # One visible line stating the decision. The scheduled task prints to
+        # nowhere, but a manually run auto (and the self-test) can then see
+        # why the helper did what it did (run #34: a silent exit 0 whose
+        # branch could not be named from the log).
+        Info ("auto: installed " + $(if ($st.tag) { $st.tag } else { 'unknown' }) + " (intact: " + $st.intact + ", via " + $st.via + ") / latest " + $release.tag + " / action " + $action)
         if ($action -eq 'current') {
             # the scheduled run ends here without a peep
         }

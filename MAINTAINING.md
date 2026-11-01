@@ -565,3 +565,46 @@ causes. Both are fixed here.
   itself in any future log.
 - Moved: both engines' native-version read, the self-test's log echo,
   this section, and KIT-VERSION.
+
+### The logs finally talked: two path bugs, a wrong refusal, and an invisible helper (kit 25)
+
+Run #34 (2026-10-31, kit 24) was the first run whose self-test log could
+explain itself, and it did: kit-24's echo and diag lines worked on every
+platform. Three concrete bugs and one visibility gap came out of it.
+
+- The self-test crashed on the sha checks with a path like
+  install\+\prismlauncher.exe - a literal plus directory. Under pwsh 7,
+  Join-Path takes additional child parts positionally, so
+  "Join-Path $root 'install/' + $name" binds the plus and the name as
+  two more path pieces instead of concatenating. The same one-liner had
+  been waiting in three checks (stage 4 and the -Yes stage on Linux,
+  the tamper check on Windows); all three now build the path with a
+  nested Join-Path, which reads the same on PowerShell 5.1 and 7.
+- The tampered-checksum stage copied the asset and a broken
+  checksums.txt but tag.txt only on macOS. The Windows helper needs
+  tag.txt in any source directory, so it refused for the wrong reason
+  ("tag.txt missing") and still exited 1 - the check passed while
+  proving nothing. The tamper copy now carries tag.txt on every
+  platform.
+- Windows: the first auto run exited 0, printed nothing, and changed
+  nothing - and every silent branch in the engine (current,
+  wait-newer-official, wait-jump, ignored, deferred) contradicted the
+  staged state, so the branch itself could not be named from the log.
+  Two changes close that gap. The engine's Info and Warn now write
+  straight to the process stdout with Console.Out instead of
+  Write-Host, which rides the console host and did not survive every
+  capture chain (a pwsh 7 parent spawning Windows PowerShell 5.1 with
+  redirected pipes); the hidden scheduled task prints to nowhere either
+  way. And auto now states its decision in one visible line: installed
+  version, intact, latest release, chosen action.
+- The self-test prints its own ground truth before the first run -
+  marker tag, tag.txt tag, and on Windows the exe's version resource,
+  the hash equality that decides "intact", and the launcher-running
+  check that can defer. On macOS the apps folder is listed into the log
+  before each backup-count check: run #34 failed all three of those
+  counts while every helper action looked right, and the listing shows
+  the real names instead of a bare number.
+- Moved: the self-test script (three path fixes, tag.txt in the tamper
+  copy, the ground-truth and macOS-listing diagnostics), the Windows
+  engine (stdout printing, the auto decision line), this section, and
+  KIT-VERSION.

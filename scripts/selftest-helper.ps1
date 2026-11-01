@@ -46,6 +46,14 @@ function Check([string]$name, [bool]$ok) {
 function Get-Sha([string]$p) {
     return (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()
 }
+function Show-MacApps([string]$When) {
+    # The backup-count checks depend on names and location matching across the
+    # helper and this script; the actual listing goes into the log so a
+    # mismatch explains itself (run #34, macOS: all three count checks red
+    # while every helper action looked right).
+    $names = @(Get-ChildItem (Join-Path $root 'apps') -Force | ForEach-Object { $_.Name + $(if ($_.PSIsContainer) { '/' } else { '' }) })
+    Write-Host ("    diag| apps dir (" + $When + "): " + ($names -join ' | '))
+}
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ("prism-selftest-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -166,13 +174,27 @@ try {
     }
 
     # ---- 4. the update itself -------------------------------------------------
-    if ($Platform -eq 'windows') {
-        # The exe's own version resource goes into the log: a silent
-        # wait-newer-official on a fresh build is unexplainable without it
-        # (run #33: the exe reported "11.1.1.0", read as newer than "11.1.1").
-        $stagedExe = Join-Path $root 'install/prismlauncher.exe'
-        Write-Host ("    diag| staged exe ProductVersion: " + (Get-Item -LiteralPath $stagedExe).VersionInfo.ProductVersion)
+    # Ground truth before the first run, so a silent or wrong helper decision
+    # names its false premise in the log (run #34: Windows exited 0, printed
+    # nothing, changed nothing, and every silent branch in the engine
+    # contradicted the staged state). Prints the marker's tag, the tag.txt tag
+    # the helper will read, and on Windows the exe's own version resource, the
+    # hash equality that decides "intact", and the launcher-running check that
+    # can defer the update.
+    $mPath = if ($Platform -eq 'macos') { Join-Path $root 'apps/.update-patcher.json' } else { Join-Path $root 'install/.update-patcher.json' }
+    $mObj = (Get-Content -LiteralPath $mPath -Raw | ConvertFrom-Json)
+    $relTag = ([string](Get-Content -LiteralPath (Join-Path $SourceDir 'tag.txt') -Raw)).Trim()
+    $diag = ("    diag| marker tag: " + $mObj.tag + " | release tag.txt: " + $relTag)
+    if ($Platform -ne 'macos') {
+        $exe = Join-Path (Join-Path $root 'install') $installedName
+        $diag += (" | exe sha == marker sha: " + ((Get-Sha $exe) -eq $mObj.sha256))
     }
+    if ($Platform -eq 'windows') {
+        $exe = Join-Path (Join-Path $root 'install') $installedName
+        $diag += (" | exe ProductVersion: " + (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion)
+        $diag += (" | launcher running: " + [bool](Get-Process -Name 'prismlauncher' -ErrorAction SilentlyContinue))
+    }
+    Write-Host $diag
     $rc = Invoke-Helper 'auto' ''
     Check "update run exits 0" ($rc -eq 0)
     if ($Platform -eq 'windows') {
@@ -191,11 +213,12 @@ try {
         Check "backup made" ($backups.Count -eq 1)
         $execBit = & bash -c ("test -x '" + (Join-Path $root 'install') + "/$installedName' && echo yes")
         Check "executable bit set" ("$execBit".Trim() -eq 'yes')
-        Check "installed sha matches the verified asset" ((Get-Sha (Join-Path $root 'install/' + $installedName)) -eq $assetSha)
+        Check "installed sha matches the verified asset" ((Get-Sha (Join-Path (Join-Path $root 'install') $installedName)) -eq $assetSha)
     }
     else {
         $plistVer = & defaults read (Join-Path $root 'apps/Prism Launcher.app/Contents/Info') CFBundleShortVersionString
         Check "app is now $Tag" ("$plistVer".Trim() -eq $Tag)
+        Show-MacApps 'stage 4'
         $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name -like 'Prism Launcher (backup *)' })
         Check "backup app kept" ($backups.Count -eq 1)
         Check "marker written" (Test-Path -LiteralPath (Join-Path $root 'apps/.update-patcher.json'))
@@ -219,9 +242,11 @@ try {
     $tamper = Join-Path $root 'tampered'
     New-Item -ItemType Directory -Force -Path $tamper | Out-Null
     Copy-Item -LiteralPath (Join-Path $SourceDir $assetName) -Destination (Join-Path $tamper $assetName)
-    if ($Platform -eq 'macos') {
-        Copy-Item -LiteralPath (Join-Path $SourceDir 'tag.txt') -Destination (Join-Path $tamper 'tag.txt')
-    }
+    # The tamper copy must be a complete test release: every engine reads the
+    # tag from tag.txt in source-dir mode, so a missing tag.txt makes the
+    # helper refuse for the wrong reason (run #34: Windows died on "tag.txt
+    # missing", not on the broken checksum the stage exists to prove).
+    Copy-Item -LiteralPath (Join-Path $SourceDir 'tag.txt') -Destination (Join-Path $tamper 'tag.txt')
     $lines = @(Get-Content (Join-Path $SourceDir 'checksums.txt'))
     $bad = foreach ($l in $lines) {
         if ($l -match ('^SHA256\s+[0-9a-fA-F]{64}\s+' + [regex]::Escape($assetName) + '\s*$')) {
@@ -246,7 +271,7 @@ try {
         Check "tamper changed nothing" ("$plistVer2".Trim() -eq $Tag)
     }
     else {
-        Check "tamper changed nothing" ((Get-Sha (Join-Path $root 'install/' + $installedName)) -eq $assetSha)
+        Check "tamper changed nothing" ((Get-Sha (Join-Path (Join-Path $root 'install') $installedName)) -eq $assetSha)
     }
 
     # ---- 7. background check on/off (Windows + Linux; macOS has none) -----------
@@ -314,13 +339,14 @@ try {
         Check "a second backup was made" ($backups.Count -eq 2)
     }
     elseif ($Platform -eq 'linux') {
-        Check "installed sha matches the verified asset" ((Get-Sha (Join-Path $root 'install/' + $installedName)) -eq $assetSha)
+        Check "installed sha matches the verified asset" ((Get-Sha (Join-Path (Join-Path $root 'install') $installedName)) -eq $assetSha)
         $backups = @(Get-ChildItem (Join-Path $root 'install') -Filter '*.AppImage.bak-*')
         Check "a second backup was made" ($backups.Count -eq 2)
     }
     else {
         $plistVer3 = & defaults read (Join-Path $root 'apps/Prism Launcher.app/Contents/Info') CFBundleShortVersionString
         Check "app is still $Tag" ("$plistVer3".Trim() -eq $Tag)
+        Show-MacApps 'stage 9'
         $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name -like 'Prism Launcher (backup *)' })
         Check "a second backup was made" ($backups.Count -eq 2)
     }
@@ -343,6 +369,7 @@ try {
     $markerNow = Get-Content $mp -Raw
     Check "apply without a terminal changed nothing" ($markerNow -match ('"tag":"' + [regex]::Escape($oldTag) + '"'))
     if ($Platform -eq 'macos') {
+        Show-MacApps 'stage 10'
         $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name -like 'Prism Launcher (backup *)' })
         Check "no extra backup from the cancelled apply" ($backups.Count -eq 2)
     }
