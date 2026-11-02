@@ -67,12 +67,29 @@ function Get-FileSha([string]$Path) {
 function Compare-PrismTags([string]$A, [string]$B) {
     # Numeric per-component tag compare ("11.1.1" vs "11.2.0"). Returns -1, 0, 1.
     # Missing or non-numeric components read as 0; an unknown version sorts oldest.
-    $a = @(($A -replace '^v', '') -split '\.' | ForEach-Object { if ($_ -match '\d') { [int]($_ -replace '\D.*$', '') } else { 0 } })
-    $b = @(($B -replace '^v', '') -split '\.' | ForEach-Object { if ($_ -match '\d') { [int]($_ -replace '\D.*$', '') } else { 0 } })
-    $n = [Math]::Max($a.Count, $b.Count)
+    # Parsed into lists named nothing like the parameters: PowerShell variable
+    # names ignore case, so an assignment to $a lands in the [string]$A
+    # parameter slot, whose type constraint then flattened the parsed array
+    # back into one flat string ("11 1 0"). Count read 1, the loop ran once
+    # over two chars, and the answer was 0 for every pair (run #36: an
+    # outdated install read as current; every red Windows check traces to
+    # that one number).
+    $na = New-Object System.Collections.Generic.List[int]
+    $nb = New-Object System.Collections.Generic.List[int]
+    foreach ($part in (([string]$A).Trim() -replace '^v', '').Split('.')) {
+        $num = $part -replace '[^0-9].*$', ''
+        if ($num -ne '') { $na.Add([int]$num) } else { $na.Add(0) }
+    }
+    foreach ($part in (([string]$B).Trim() -replace '^v', '').Split('.')) {
+        $num = $part -replace '[^0-9].*$', ''
+        if ($num -ne '') { $nb.Add([int]$num) } else { $nb.Add(0) }
+    }
+    $n = [Math]::Max($na.Count, $nb.Count)
     for ($i = 0; $i -lt $n; $i++) {
-        $x = if ($i -lt $a.Count) { $a[$i] } else { 0 }
-        $y = if ($i -lt $b.Count) { $b[$i] } else { 0 }
+        $x = 0
+        $y = 0
+        if ($i -lt $na.Count) { $x = $na[$i] }
+        if ($i -lt $nb.Count) { $y = $nb[$i] }
         if ($x -lt $y) { return -1 }
         if ($x -gt $y) { return 1 }
     }

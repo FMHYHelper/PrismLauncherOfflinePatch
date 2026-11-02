@@ -608,3 +608,38 @@ platform. Three concrete bugs and one visibility gap came out of it.
   copy, the ground-truth and macOS-listing diagnostics), the Windows
   engine (stdout printing, the auto decision line), this section, and
   KIT-VERSION.
+
+### Two answers small enough to test on a laptop: a case-blind variable and a prefix pattern (kit 26)
+
+Run #36 (2026-11-01, kit 25) left Linux green end to end, and its log
+pinned both remaining failures tightly enough that each decomposed
+into a few lines of local PowerShell before anything in the kit
+changed.
+
+- Windows, all eight red checks: the helper's decision line read
+  "auto: installed 11.1.0 (intact: True, via marker) / latest 11.1.1 /
+  action current" - it called an outdated install current. The tag
+  compare behind that answer returned 0 for every pair, and the cause
+  is one PowerShell fact: variable names ignore case. The function
+  assigned its parsed array to $a while the parameter was [string]$A -
+  the same variable. The array landed in the parameter's slot, the
+  parameter's string type flattened it back into one string
+  ("11 1 0"), Count read 1, the loop ran once comparing the two chars
+  at position 0, and the function answered 0 no matter what came in.
+  Traced step by step on a copy of the real body before touching the
+  kit. The function now parses into lists named nothing like the
+  parameters and compares with a plain loop; the same trace harness
+  showed the new body answer -1, 0, and 1 where it should.
+- macOS, all three red checks: the backup filters used
+  -like 'Prism Launcher (backup *)'. -like must match the whole name,
+  and the pattern ends at the closing paren while every real backup
+  name continues with ".app" - the filter could never pass, on any
+  engine, and only became visible once the helper actually started
+  keeping backups. A byte scan cleared invisible characters first;
+  the pattern matched the name without ".app" and missed it with.
+  The three filters now use ordinal StartsWith, which has no pattern
+  layer to disagree; a mirror of the real check counted 0 with -like
+  and 1 with StartsWith on the same folder.
+- Moved: the Windows engine (the Compare-PrismTags rewrite), the
+  self-test script (three backup filters), this section, and
+  KIT-VERSION.

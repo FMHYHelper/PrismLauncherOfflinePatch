@@ -219,7 +219,12 @@ try {
         $plistVer = & defaults read (Join-Path $root 'apps/Prism Launcher.app/Contents/Info') CFBundleShortVersionString
         Check "app is now $Tag" ("$plistVer".Trim() -eq $Tag)
         Show-MacApps 'stage 4'
-        $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name -like 'Prism Launcher (backup *)' })
+        # -like must match the whole name, and the old pattern ended at the
+        # closing paren while every backup name continues with ".app" - the
+        # filter could never pass on any engine (run #36: the listing showed
+        # the backup, the count found none). Ordinal StartsWith has no
+        # pattern layer to disagree.
+        $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name.StartsWith('Prism Launcher (backup ') })
         Check "backup app kept" ($backups.Count -eq 1)
         Check "marker written" (Test-Path -LiteralPath (Join-Path $root 'apps/.update-patcher.json'))
         $leftover = @(Get-ChildItem '/Volumes' -Directory | Where-Object { $_.Name -like 'Prism*' })
@@ -347,7 +352,7 @@ try {
         $plistVer3 = & defaults read (Join-Path $root 'apps/Prism Launcher.app/Contents/Info') CFBundleShortVersionString
         Check "app is still $Tag" ("$plistVer3".Trim() -eq $Tag)
         Show-MacApps 'stage 9'
-        $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name -like 'Prism Launcher (backup *)' })
+        $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name.StartsWith('Prism Launcher (backup ') })
         Check "a second backup was made" ($backups.Count -eq 2)
     }
 
@@ -370,7 +375,7 @@ try {
     Check "apply without a terminal changed nothing" ($markerNow -match ('"tag":"' + [regex]::Escape($oldTag) + '"'))
     if ($Platform -eq 'macos') {
         Show-MacApps 'stage 10'
-        $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name -like 'Prism Launcher (backup *)' })
+        $backups = @(Get-ChildItem (Join-Path $root 'apps') -Directory | Where-Object { $_.Name.StartsWith('Prism Launcher (backup ') })
         Check "no extra backup from the cancelled apply" ($backups.Count -eq 2)
     }
     else {
